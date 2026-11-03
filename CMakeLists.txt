@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 4.1)
+﻿cmake_minimum_required(VERSION 4.1)
 project(pca_relational_kd LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -22,8 +22,8 @@ message(STATUS "libtorch: ${TORCH_INSTALL_PREFIX}   (${Torch_VERSION})")
 set(APP_SOURCES
     "src/pca_relational_kd.h"
     "src/pca_relational_kd.cpp"
-    # ↓ 以下文件还不存在，搬进来之后取消对应注释。
-    # "src/config.h"               "src/config.cpp"
+    "src/config.h"               
+    "src/config.cpp"
     # "src/kd/loss.h"
     # "src/train/batch.h"
     # "src/data/cifar100.h"        "src/data/cifar100.cpp"
