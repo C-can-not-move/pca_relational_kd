@@ -17,6 +17,18 @@ list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_ROOT}")
 find_package(Torch REQUIRED)
 message(STATUS "libtorch: ${TORCH_INSTALL_PREFIX}   (${Torch_VERSION})")
 
+# ---------------- libjpeg-turbo ----------------
+if(WIN32)
+    set(LIBJPEG_TURBO_ROOT "D:/DATA/C++_lib/libjpeg-turbo")
+else()
+    set(LIBJPEG_TURBO_ROOT "/home/chenzhijiang/userFile/C++_lib/libjpeg-turbo")
+endif()
+
+list(APPEND CMAKE_PREFIX_PATH "${LIBJPEG_TURBO_ROOT}")   # 必须在 find_package 之前
+find_package(JPEG REQUIRED)
+message(STATUS "JPEG include: ${JPEG_INCLUDE_DIR}")
+message(STATUS "JPEG library: ${JPEG_LIBRARY}")
+
 # ---------------- 源文件 ----------------
 # 手写清单。CMake 不扫目录 —— 新加文件必须在这里补一行，否则不会进编译。
 set(APP_SOURCES
@@ -24,6 +36,8 @@ set(APP_SOURCES
     "src/pca_relational_kd.cpp"
     "src/config.h"               
     "src/config.cpp"
+    "src/data/imagenet_loader.h" 
+    "src/data/imagenet_Loader.cpp"
     # "src/kd/loss.h"
     # "src/train/batch.h"
     # "src/data/cifar100.h"        "src/data/cifar100.cpp"
@@ -38,8 +52,7 @@ add_executable(pca_relational_kd ${APP_SOURCES})
 
 # ---------------- 头文件路径与链接 ----------------
 target_include_directories(pca_relational_kd PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(pca_relational_kd PRIVATE torch)
-
+target_link_libraries(pca_relational_kd PRIVATE torch JPEG::JPEG)
 # ---------------- 编译器选项（仅 MSVC）----------------
 if(MSVC)
   target_compile_options(pca_relational_kd PRIVATE /bigobj /EHsc /wd4267 /wd4244 /utf-8)
