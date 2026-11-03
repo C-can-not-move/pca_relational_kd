@@ -10,15 +10,14 @@ namespace prkd::data
 {
     namespace
     {
-        // libjpeg 默认的 error_exit 会直接 exit()。必须换成 longjmp，
-        // 否则一张坏图就把整个进程干掉。
-        //
+        // libjpeg 默认的 error_exit 会直接 exit()。必须换成 longjmp，否则一张坏图就会终止整个进程。
+        // 用 C 的方式模拟继承
         // 携带 jmp_buf 的办法是"继承"结构体：JpegErrorMgr 的首成员是 jpeg_error_mgr，
         // 所以 jpeg_std_error() 返回的指针可以安全地 reinterpret_cast 回来。
         struct JpegErrorMgr
         {
-            jpeg_error_mgr pub;
-            std::jmp_buf jb;
+            jpeg_error_mgr pub; // 首成员
+            std::jmp_buf jb;    // 附加信息
             char msg[JMSG_LENGTH_MAX] = { 0 };
         };
 
@@ -29,7 +28,7 @@ namespace prkd::data
             std::longjmp(e->jb, 1);
         }
 
-        // 屏蔽 libjpeg 往 stderr 打的 warning（ImageNet 里有一部分图会触发）。
+        // 屏蔽 libjpeg 往 stderr 打印的 warning（ImageNet 里有一部分图会触发）。
         // 注意签名：output_message 只收一个 j_common_ptr；
         // 收两个参数的那个是 emit_message(cinfo, level)。
         void on_output(j_common_ptr) {}
@@ -50,8 +49,9 @@ namespace prkd::data
         }
 
         jpeg_decompress_struct cinfo;
-        std::memset(&cinfo, 0, sizeof(cinfo));      // mem 置空 ⇒ destroy 是安全的空操作
+        std::memset(&cinfo, 0, sizeof(cinfo));      // mem 置空 ⇒ destroy 安全的空操作
 
+        // 这句 memset 合法，前提是 JpegErrorMgr 的成员全部 trivially copyable
         JpegErrorMgr jerr;
         std::memset(&jerr, 0, sizeof(jerr));
 
@@ -59,9 +59,8 @@ namespace prkd::data
         jerr.pub.error_exit = on_error;
         jerr.pub.output_message = on_output;
 
-        // ★ longjmp 不跑析构函数。凡是需要析构的局部对象，都必须在这里（setjmp 之前）
-        //   就构造完毕 —— 这样 longjmp 跳回来时它仍然存在，函数退出时才正常析构。
-        //   raw 先留空（不分配），后面用 assign 填。
+        // longjmp 不跑析构函数。凡是需要析构的局部对象，都必须在这里（setjmp 之前）就构造完毕 —— 这样 longjmp 跳回来时它仍然存在，函数退出时才正常析构。
+        // raw 先留空（不分配），后面用 assign 填。
         std::vector<uint8_t> raw;
 
         if (setjmp(jerr.jb) != 0)
@@ -81,8 +80,7 @@ namespace prkd::data
 
         // 四分量（CMYK / YCCK）保持四通道出来，之后再转；其余一律让 libjpeg 转成 RGB
         // （灰度图因此也会变成三通道，等价 PIL 的 convert('RGB')）。
-        const bool is_cmyk = (cinfo.jpeg_color_space == JCS_CMYK ||
-                              cinfo.jpeg_color_space == JCS_YCCK);
+        const bool is_cmyk = (cinfo.jpeg_color_space == JCS_CMYK ||cinfo.jpeg_color_space == JCS_YCCK);
         cinfo.out_color_space = is_cmyk ? JCS_CMYK : JCS_RGB;
 
         jpeg_start_decompress(&cinfo);
@@ -112,8 +110,23 @@ namespace prkd::data
         while (cinfo.output_scanline < cinfo.output_height)
         {
             JSAMPROW row = raw.data() + static_cast<size_t>(cinfo.output_scanline) * row_bytes;
-            jpeg_read_scanlines(&cinfo, &row, 1);
+
+            // 返回值被丢掉的话，一旦 libjpeg 返回 0 而 output_scanline 不长，
+            // 这里就是死循环。jpeg_mem_src 不会悬停（suspend 只发生在非阻塞
+            // 数据源），所以理论上跑不到 —— 但接住它只是多一次比较，
+            // 换来"hang 变 error"。
+            if (jpeg_read_scanlines(&cinfo, &row, 1) == 0)
+            {
+                break;
+            }
         }
+
+        // ★ 这两项必须在 jpeg_finish_decompress 之前取：finish 有可能 longjmp，
+        //   一旦跳走就再也拿不到了。
+        //   num_warnings 在 jerr.pub 里，destroy 不影响；complete 依赖 cinfo，
+        //   所以都趁着 cinfo 还活着读掉。
+        const int  warns    = jerr.pub.num_warnings;
+        const bool complete = (cinfo.output_scanline >= cinfo.output_height);
 
         // APP14 的 Adobe 标记。它决定两件事：
         //   ① libjpeg 靠它把四分量识别成 CMYK / YCCK（而不是 RGB）
@@ -127,18 +140,19 @@ namespace prkd::data
         bm.w = w;
         bm.h = h;
         bm.c = 3;
-        bm.data.resize(static_cast<size_t>(w) * h * 3);
+        bm.decode_warnings = warns;
+        bm.decode_complete = complete;
+        bm.decode_src_components = comps;
 
         if (comps == 3)
         {
             // comps == 3 时 raw 与 bm.data 的尺寸、布局、类型完全相同（都是 w*h*3 的 HWC），
-            // 所以直接接管那块内存，不必再逐字节拷一遍：
-            //   memcpy : 每张 562 KB（500x375），1920x1080 是 6.2 MB
-            //   move   : 3 个字（data / size / capacity）
-            //
-            // move 之后 raw 是"有效但未指定"状态 —— 后面不再用它。
             bm.data = std::move(raw);
-            return bm;        }
+            return bm;
+        }
+
+        // 只有 comps == 4 才真的需要一块新的三通道缓冲
+        bm.data.resize(static_cast<size_t>(w) * h * 3);
 
         // comps == 4：CMYK → RGB
         //
