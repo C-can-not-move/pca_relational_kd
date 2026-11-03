@@ -25,6 +25,8 @@ def get_imagenet_test_transform(mean, std):
 ```
 
 数据流程应该是imagenet_loader调用decode来读取jpeg，然后交给transform类的函数进行数据增强。
+
+transform类把各种增强方式封装成一个个函数，调用时传入参数即可。transform类的函数应该是可以直接调用的。
 ***
 **待验证的假设，非结论**Python 的 transform 跑在 CPU 的 worker 进程里。这不是遗漏：ImageNet 的图解码后尺寸不一，必须先逐张变换到同一尺寸才能拼 batch，所以变换天然落在 CPU。
 
@@ -35,3 +37,4 @@ def get_imagenet_test_transform(mean, std):
 3. 若将来引入固定尺寸的 uint8 缓存（当前方案已排除），那时整批上传再变换才是净收益。
 
 **结论**：现在不改。 等实测出「数据管线成为瓶颈，且瓶颈在 CPU 变换」时再动。
+
