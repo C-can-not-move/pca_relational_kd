@@ -14,7 +14,7 @@ namespace mkd::cfg
         std::string data_dir;              // 由 defaults() 或调用者填；默认是cifar-100-batches-bin
         std::string out_dir = "./run";     // checkpoint 等落在这里
         int         device_index = 0;      // 用哪块卡；-1 = 强制 CPU
-        int64_t     seed = 2026;
+        int64_t     seed = 2026;           // 多线程随机种子不好复现，改用全局种子
     };
 
     RunConfig defaults();

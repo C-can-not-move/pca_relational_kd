@@ -4,4 +4,34 @@
 C++上面读取JPEG图片，为了确保win和linux都能读取，使用了libjpeg-turbo库。这个会在CMakeLists.txt中添加libjpeg-turbo的依赖。
 
 Python 读 JPEG 的底层是 libjpeg-turbo。和 C++ 要用的 libjpeg-turbo 属于同一个解码器家族，但不是同一次构建会有影响。
+***
+transform类应该有的功能，为了让增强方法更加明显，采用的python类似的一个操作一个函数的形式
+```
+def get_imagenet_train_transform(mean, std):
+    return transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        normalize,
+    ])
 
+def get_imagenet_test_transform(mean, std):
+    return transforms.Compose([
+        transforms.Resize(256),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        normalize,
+    ])
+```
+
+数据流程应该是imagenet_loader调用decode来读取jpeg，然后交给transform类的函数进行数据增强。
+***
+**待验证的假设，非结论**Python 的 transform 跑在 CPU 的 worker 进程里。这不是遗漏：ImageNet 的图解码后尺寸不一，必须先逐张变换到同一尺寸才能拼 batch，所以变换天然落在 CPU。
+
+真正的优化空间只在批量形状固定之后：
+
+1. 验证路径（Resize + CenterCrop，整批同形状）→ 可以整批上 GPU，是净收益
+2. 训练路径（RandomResizedCrop，每张的框不同）→ 逐张上 GPU 反而更慢，kernel launch 开销占主导
+3. 若将来引入固定尺寸的 uint8 缓存（当前方案已排除），那时整批上传再变换才是净收益。
+
+**结论**：现在不改。 等实测出「数据管线成为瓶颈，且瓶颈在 CPU 变换」时再动。
