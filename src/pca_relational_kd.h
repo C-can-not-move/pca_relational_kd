@@ -8,7 +8,9 @@
 #include "data/decode.h"
 #include "data/imagenet_loader.h"
 #include "data/transform.h"
-#include "tools/scan.h"
+
+#include <cstdio>      // std::fprintf
+#include <exception>   // std::exception
 
 #ifdef _WIN32
 #include <windows.h>

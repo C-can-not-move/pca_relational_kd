@@ -218,7 +218,7 @@ namespace prkd::data
     void ImageNetLoader::start_workers() {}   // 同步版：无操作
     void ImageNetLoader::stop_workers() {}    // 同步版：无操作
 
-    void ImageNetLoader::load_one_into(ImageBatch& out, int64_t slot, int64_t index) const
+    DecodeDiag ImageNetLoader::load_one_into(ImageBatch& out, int64_t slot, int64_t index) const
     {
         // 每线程一份缓冲：大小只增不减，避免每张图一次分配 + 一次清零。
         // ★ 必须传 len 而不是 tls_buf.size() —— size() 是历史最大值，
@@ -226,6 +226,11 @@ namespace prkd::data
         thread_local std::vector<uint8_t> tls_buf;
         const size_t len = read_into(paths_[static_cast<size_t>(index)], tls_buf);
         const auto bmp = decode_rgb8(tls_buf.data(), len);
+
+        // 诊断在解码这一步就齐了；致命错误已经抛出去了，能走到这里的都是"解出来了"。
+        DecodeDiag diag;
+        diag.complete = bmp.decode_complete;
+        diag.warnings = bmp.decode_warnings;
 
         auto x = to_chw01(bmp.data.data(), bmp.h, bmp.w);
 
@@ -250,6 +255,7 @@ namespace prkd::data
         static const NormStats kNorm = imagenet_norm();
 
         out.images.select(0, slot).copy_(normalize(x, kNorm));
+        return diag;
     }
 
     bool ImageNetLoader::has_next() const
@@ -274,12 +280,25 @@ namespace prkd::data
         out.labels = torch::empty({ n }, torch::kInt64);
         out.indices.resize(static_cast<size_t>(n));
 
+        // 按批收集，末尾只加一次锁 —— 每张图加锁的代价比读一张图高得多。
+        int64_t n_incomplete = 0;
+        int64_t n_warned = 0;
+
         for (int64_t k = 0; k < n; ++k)
         {
             const int64_t idx = order_[static_cast<size_t>(cursor_ + k)];
             out.indices[static_cast<size_t>(k)] = idx;
             out.labels[k] = labels_[static_cast<size_t>(idx)];
-            load_one_into(out, k, idx);
+
+            const DecodeDiag d = load_one_into(out, k, idx);
+            if (!d.complete)
+            {
+                ++n_incomplete;          // 更严重的那一档
+            }
+            else if (d.warnings > 0)
+            {
+                ++n_warned;              // 有警告但读完了
+            }
         }
         cursor_ += n;
 
@@ -289,6 +308,8 @@ namespace prkd::data
             std::lock_guard<std::mutex> lk(stats_mu_);
             stats_.images += n;
             stats_.seconds += dt;
+            stats_.incomplete_images += n_incomplete;
+            stats_.warned_images += n_warned;
         }
         return out;
     }

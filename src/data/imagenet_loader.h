@@ -68,12 +68,31 @@ namespace prkd::data
     };
 
     // ------------------------------------------------------------------------
+    // DecodeDiag —— 这张图解码得干不干净。由 load_one_into 带出来。
+    //
+    // 为什么不直接在 load_one_into 里累加：它是 const，碰不到 stats_；
+    // 而且每张图加一次锁不划算 —— 按批收齐、末尾只加一次锁。
+    // 线程版起来之后，这个结构会挂在 worker 的结果项上一起回收集线程，不必另开通道。
+    // ------------------------------------------------------------------------
+    struct DecodeDiag
+    {
+        bool complete = true;   // false ⇒ libjpeg 提前停住，没写到的像素是预清零的 0（黑）
+        int  warnings = 0;      // >0 ⇒ 解码过程中报过警告（截断、多余字节、坏 Huffman 码…）
+    };
+
+    // ------------------------------------------------------------------------
     // LoaderStats —— 吞吐统计。靠这个判断数据管线是不是瓶颈
     // ------------------------------------------------------------------------
     struct LoaderStats
     {
         int64_t images = 0;
         double  seconds = 0.0;
+
+        // 下面两项是"只计数、不跳过"的产物 —— 不动 order_ / has_next() / num_batches()。
+        // 两者【互斥】：incomplete 是更严重的那一档，warned 指"有警告但读完了"。
+        // 所以干净张数 = images - incomplete_images - warned_images。
+        int64_t incomplete_images = 0;   // !diag.complete
+        int64_t warned_images = 0;       // diag.complete && diag.warnings > 0
 
         double img_per_sec() const
         {
@@ -135,7 +154,9 @@ namespace prkd::data
         void start_workers();
         void stop_workers();
 
-        void load_one_into(ImageBatch& out, int64_t slot, int64_t index) const;
+        // 读图 + 解码 + 变换，结果写进 out 的第 slot 行。
+        // 返回这张图的解码诊断；统计在 next() 里按批集中累加。
+        DecodeDiag load_one_into(ImageBatch& out, int64_t slot, int64_t index) const;
 
         // ---- 配置与索引 ----
         std::filesystem::path    root_;

@@ -1,4 +1,4 @@
-#include "data/decode.h"
+﻿#include "data/decode.h"
 
 
 extern "C"
@@ -142,7 +142,6 @@ namespace prkd::data
         bm.c = 3;
         bm.decode_warnings = warns;
         bm.decode_complete = complete;
-        bm.decode_src_components = comps;
 
         if (comps == 3)
         {
