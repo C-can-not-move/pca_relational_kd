@@ -1,9 +1,5 @@
-﻿#include "data/transform.h"
+#include "data/transform.h"
 
-#include <cmath>
-#include <stdexcept>
-#include <utility>
-#include <vector>
 
 namespace prkd::data
 {
@@ -25,13 +21,26 @@ namespace prkd::data
         }
 
         // (C,) -> (1,C,1,1)，用于逐通道广播
-        torch::Tensor channel_tensor(const std::vector<float>& v, const torch::TensorOptions& opt)
+                // (C,) -> 与 like 对齐的广播形状：
+        //   like 是 (C,H,W)   ⇒ (C,1,1)
+        //   like 是 (N,C,H,W) ⇒ (1,C,1,1)
+        //
+        // ★ 不能一律用 (1,C,1,1)：那样 (C,H,W) - (1,C,1,1) 会左补成 (1,C,H,W)，
+        //   结果多出一维，回填到 (C,H,W) 时报
+        //   "output with shape [3,224,224] doesn't match the broadcast shape [1,3,224,224]"。
+        torch::Tensor channel_tensor(const std::vector<float>& v, const torch::Tensor& like)
         {
             const int64_t c = static_cast<int64_t>(v.size());
-            auto t = torch::empty({ 1, c, 1, 1 }, opt);
+            const int64_t dim = like.dim();
+            const int64_t cdim = dim - 3;                 // 从右数第三个 = 通道
+
+            std::vector<int64_t> shape(static_cast<size_t>(dim), 1);
+            shape[static_cast<size_t>(cdim)] = c;
+
+            auto t = torch::empty(shape, like.options());
             for (int64_t i = 0; i < c; ++i)
             {
-                t.select(1, i).fill_(v[static_cast<size_t>(i)]);
+                t.select(cdim, i).fill_(v[static_cast<size_t>(i)]);
             }
             return t;
         }
@@ -141,10 +150,8 @@ namespace prkd::data
         TORCH_CHECK(hwc != nullptr, "to_chw01: 像素指针为空");
         TORCH_CHECK(h > 0 && w > 0, "to_chw01: 尺寸非法 ", h, "x", w);
 
-        // ★ from_blob 不持有内存，必须 clone —— 否则读的是已释放的缓冲区，
-        //   而且大多数时候还能算对，只在偶尔崩。
+        // 注意不能把 .to挪到 permute 之前。那样拷的是 HWC 排布，之后还得再转一次，反而多一步。
         return torch::from_blob(const_cast<uint8_t*>(hwc), { h, w, 3 }, torch::kByte)
-            .clone()
             .permute({ 2, 0, 1 })
             .to(torch::kFloat32)
             .div_(255.0);
@@ -203,8 +210,8 @@ namespace prkd::data
             "normalize: 通道数不一致，stats 有 ", stats.mean.size(),
             " 个，张量有 ", chw.size(0), " 个");
 
-        const auto mean = channel_tensor(stats.mean, chw.options());
-        const auto std = channel_tensor(stats.std, chw.options());
+        const auto mean = channel_tensor(stats.mean, chw);
+        const auto std = channel_tensor(stats.std, chw);
         return chw.sub(mean).div(std);
     }
 
@@ -216,8 +223,8 @@ namespace prkd::data
         TORCH_CHECK(static_cast<int64_t>(stats.mean.size()) == chw.size(0),
             "denormalize: 通道数不一致");
 
-        const auto mean = channel_tensor(stats.mean, chw.options());
-        const auto std = channel_tensor(stats.std, chw.options());
+        const auto mean = channel_tensor(stats.mean, chw);
+        const auto std = channel_tensor(stats.std, chw);
         return chw.mul(std).add(mean);
     }
 }  // namespace prkd::data

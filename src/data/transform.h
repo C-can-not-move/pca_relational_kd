@@ -1,4 +1,4 @@
-﻿// src/data/transform.h —— 图像变换原语。一个名字一件事，与 torchvision 同名。
+// src/data/transform.h —— 图像变换原语。一个名字一件事，与 torchvision 同名。
 //
 // 工作对象是 CHW 的 float32 张量（不是像素指针）。只有 to_chw01 收 HWC 的 uint8。
 // 一旦拆成原语，它们就该在张量层 —— 否则每个函数都要重复判断 HWC 还是 CHW。
@@ -17,8 +17,11 @@
 
 #include <torch/torch.h>
 
+#include <cmath>
 #include <cstdint>
 #include <random>
+#include <stdexcept>
+#include <utility>
 #include <vector>
 
 namespace prkd::data

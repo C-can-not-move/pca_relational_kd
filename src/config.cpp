@@ -1,6 +1,6 @@
 ﻿#include "config.h"
 
-namespace mkd::cfg
+namespace prkd::cfg
 {
 	RunConfig defaults()
 	{
@@ -13,4 +13,4 @@ namespace mkd::cfg
 #endif
 		return c;
 	}
-}  // namespace mkd::cfg
+}  // namespace prkd::cfg

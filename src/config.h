@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <string>
 
-namespace mkd::cfg
+namespace prkd::cfg
 {
     // 一次运行的设置 —— 在哪训、结果输出到哪、用哪块卡、种子。
     // 刻意不装 epochs / batch_size / out_size 那些。
@@ -19,4 +19,4 @@ namespace mkd::cfg
 
     RunConfig defaults();
 
-}  // namespace mkd::cfg
+}  // namespace prkd::cfg

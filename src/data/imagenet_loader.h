@@ -15,19 +15,25 @@
 
 #include <torch/torch.h>
 
+#include <algorithm>
 #include <atomic>
+#include <cctype>
+#include <chrono>
 #include <condition_variable>
 #include <cstdint>
+#include <cstring>
 #include <deque>
 #include <filesystem>
+#include <fstream>
 #include <latch>
 #include <memory>
 #include <mutex>
+#include <numeric>
 #include <semaphore>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
-
 namespace prkd::data
 {
     // ------------------------------------------------------------------------
@@ -49,9 +55,6 @@ namespace prkd::data
         */
         bool train = true;
 
-        // 空字符串 → ImageFolder 结构（root/类目录/文件）
-        // 非空     → 平铺目录 + 这个标签表（第 i 行 = 排序后第 i 个文件的类别）
-        std::string val_labels;
     };
 
     // ------------------------------------------------------------------------
@@ -128,13 +131,11 @@ namespace prkd::data
         };
 
         void build_index_imagefolder();
-        void build_index_flat();
         void reset_order();
         void start_workers();
         void stop_workers();
 
-        void        load_one_into(ImageBatch& out, int64_t slot, int64_t index) const;
-        ImageBatch  collect();
+        void load_one_into(ImageBatch& out, int64_t slot, int64_t index) const;
 
         // ---- 配置与索引 ----
         std::filesystem::path    root_;

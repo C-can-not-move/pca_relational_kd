@@ -1,9 +1,5 @@
 #include "data/decode.h"
 
-#include <csetjmp>
-#include <cstring>
-#include <stdexcept>
-#include <string>
 
 extern "C"
 {
@@ -135,9 +131,14 @@ namespace prkd::data
 
         if (comps == 3)
         {
-            std::memcpy(bm.data.data(), raw.data(), raw.size());
-            return bm;
-        }
+            // comps == 3 时 raw 与 bm.data 的尺寸、布局、类型完全相同（都是 w*h*3 的 HWC），
+            // 所以直接接管那块内存，不必再逐字节拷一遍：
+            //   memcpy : 每张 562 KB（500x375），1920x1080 是 6.2 MB
+            //   move   : 3 个字（data / size / capacity）
+            //
+            // move 之后 raw 是"有效但未指定"状态 —— 后面不再用它。
+            bm.data = std::move(raw);
+            return bm;        }
 
         // comps == 4：CMYK → RGB
         //

@@ -1,4 +1,4 @@
-﻿// src/data/decode.h —— 内存字节 → HWC RGB8 像素。一个函数，不管文件从哪来。
+// src/data/decode.h —— 内存字节 → HWC RGB8 像素。一个函数，不管文件从哪来。
 //
 // 为什么是 HWC：JPEG 解码出来天然就是交错排布（一个像素的 RGB 相邻），
 // 而 PIL/numpy 那边也是 (H,W,3)。到 CHW 的转换在 transform.h 的 to_chw01 里做，
@@ -9,8 +9,12 @@
 // 所以解码结果可能差 1 个灰阶。
 #pragma once
 
+#include <csetjmp>
 #include <cstddef>
 #include <cstdint>
+#include <stdexcept>
+#include <string>
+#include <utility>
 #include <vector>
 
 namespace prkd::data
