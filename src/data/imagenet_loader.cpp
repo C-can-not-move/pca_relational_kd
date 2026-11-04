@@ -1,8 +1,8 @@
 ﻿// src/data/imagenet_loader.cpp —— 同步版（workers = 0）
 //
-// 这一版把索引、解码、变换、拼 batch 全部验完；线程那套（槽位/latch/队列）
-// 仍然声明在头里，但构造函数直接拒绝 workers > 0。
-// 先让正确性成立，再谈吞吐。
+// workers = 0：主线程自己读，行为和以前完全一样。
+// workers > 0：一批的任务由 workers 个常驻线程动态领取，
+//              每批两级同步（start_bar_ 放行 / done_bar_ 收齐）。
 #include "data/imagenet_loader.h"
 
 // 项目内的跨模块依赖：loader 要调解码和变换（两个头各自已自给自足）
@@ -79,7 +79,7 @@ namespace prkd::data
         TORCH_CHECK(opt_.batch_size > 0, "ImageNetLoader: batch_size 必须 > 0");
         TORCH_CHECK(opt_.crop > 0, "ImageNetLoader: crop 必须 > 0");
         TORCH_CHECK(opt_.short_side > 0, "ImageNetLoader: short_side 必须 > 0");
-        if (opt_.workers > 0)
+        if (opt_.workers < 0)
         {
             throw std::runtime_error("ImageNetLoader: workers 不能为负");
         }

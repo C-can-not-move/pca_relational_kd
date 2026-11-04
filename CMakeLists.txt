@@ -54,6 +54,8 @@ set(APP_SOURCES
     "src/data/transform.cpp"
     "src/data/decode.h"
     "src/data/decode.cpp"
+    "src/test_unit/loader_check.h"
+    "src/test_unit/loader_check.cpp"
     # "src/kd/loss.h"
     # "src/train/batch.h"
     # "src/data/cifar100.h"        "src/data/cifar100.cpp"

@@ -9,8 +9,8 @@
 // 命名：本类的输出叫 ImageBatch，和 kd/loss.h 里那个 train::Batch 不是一回事 ——
 // 后者是【损失函数的输入】（logits / feat / target），前者是【原始图像 + 标签】。
 //
-// ⚠ C++20：本头用到 std::latch / std::counting_semaphore / std::jthread（含 std::stop_token）。
-//   要求 GCC >= 11 / MSVC >= 19.29。GCC 9 编不过。
+// C++20
+// 要求 GCC >= 11 / MSVC >= 19.29。GCC 9 编不过。
 #pragma once
 
 // ---- 第三方 ----
@@ -53,7 +53,6 @@ namespace prkd::data
     {
         int64_t batch_size = 64;
         int64_t workers = 0;        // 0 = 同步单线程；>0 = 起这么多个读图线程
-        int64_t queue_depth = 4;    // 队列里最多压几个 batch。workers>0 才有意义
         int64_t short_side = 256;   // Resize(短边) —— 只对 train=false 生效；256 = V1 口径，V2 用 232
         int64_t crop = 224;         // CenterCrop / RRC 的输出边长
 
