@@ -1,4 +1,4 @@
-// src/data/imagenet_loader.cpp —— 同步版（workers = 0）
+﻿// src/data/imagenet_loader.cpp —— 同步版（workers = 0）
 //
 // 这一版把索引、解码、变换、拼 batch 全部验完；线程那套（槽位/latch/队列）
 // 仍然声明在头里，但构造函数直接拒绝 workers > 0。
@@ -75,16 +75,13 @@ namespace prkd::data
         : root_(std::move(root))
         , opt_(opt)
         , seed_(seed)
-        // std::counting_semaphore 没有默认构造，必须在这里给初值。
-        // 单位是【任务数】= 批数 × 每批样本数；同步版用不到它，但仍然要初始化。
-        , empty_slots_(std::max<int64_t>(1, opt.queue_depth * opt.batch_size))
     {
         TORCH_CHECK(opt_.batch_size > 0, "ImageNetLoader: batch_size 必须 > 0");
         TORCH_CHECK(opt_.crop > 0, "ImageNetLoader: crop 必须 > 0");
         TORCH_CHECK(opt_.short_side > 0, "ImageNetLoader: short_side 必须 > 0");
         if (opt_.workers > 0)
         {
-            throw std::runtime_error("ImageNetLoader: workers > 0 尚未实现（本版只做同步）");
+            throw std::runtime_error("ImageNetLoader: workers 不能为负");
         }
 
         build_index_imagefolder();
@@ -101,9 +98,14 @@ namespace prkd::data
         }
 
         start_epoch(0);
+        // worker 线程常驻：起一次，析构时停。每批只靠两个 barrier 放行/收齐。
+        start_workers();
     }
 
-    ImageNetLoader::~ImageNetLoader() = default;
+    ImageNetLoader::~ImageNetLoader()
+    {
+        stop_workers();
+    }
 
     // ------------------------------------------------------------------------
     // 索引：类目录字典序 → 标签 0..N-1，类内文件名字典序
@@ -215,8 +217,76 @@ namespace prkd::data
         }
     }
 
-    void ImageNetLoader::start_workers() {}   // 同步版：无操作
-    void ImageNetLoader::stop_workers() {}    // 同步版：无操作
+    void ImageNetLoader::start_workers() 
+    {
+        if (opt_.workers <= 0) return;
+
+        const auto nw = static_cast<std::ptrdiff_t>(opt_.workers);
+        start_bar_ = std::make_unique<std::barrier<>>(nw + 1);
+        done_bar_ = std::make_unique<std::barrier<>>(nw + 1);
+        stop_.store(false, std::memory_order_relaxed);
+
+        workers_.reserve(static_cast<size_t>(opt_.workers));
+        for (int64_t i = 0; i < opt_.workers; ++i)
+        {
+            workers_.emplace_back([this] { worker_loop(); });
+        }
+    }   
+    // 只能在构造末尾，或析构里面调用。
+    // 否则 worker 可能正卡在 done_bar_ 上，而主线程不再去收齐 —— 永远挂住。
+    void ImageNetLoader::stop_workers() 
+    {
+        if (workers_.empty()) return;
+
+        stop_.store(true, std::memory_order_relaxed);
+
+        // 放行一次：worker 从 start_bar_ 出来后立刻看到 stop_ 并返回。
+        // 它们不会再走到 done_bar_，所以这里绝对不能等 done_bar_。
+        start_bar_->arrive_and_wait();
+
+        workers_.clear();          // jthread 析构 = request_stop + join
+        start_bar_.reset();
+        done_bar_.reset();
+    } 
+
+    void ImageNetLoader::worker_loop()
+    {
+        // 这里不调 torch::set_num_threads(1)。
+        //
+        // PyTorch 的 worker 会调，是因为它是独立【进程】，设置只影响自己那份 ATen 线程池。
+        // 而这里是线程，torch::set_num_threads 是进程级全局量：
+        // 在这儿改成 1，主线程的训练前向/反向也会跟着变单线程。
+        // 真要处理 ATen 线程池和 worker 抢核，得在进程级统一决定，不能由 loader 单方面改。
+
+        for (;;)
+        {
+            start_bar_->arrive_and_wait();
+            if (stop_.load(std::memory_order_relaxed)) return;
+
+            ImageBatch* const out = cur_out_;
+            const int64_t base = cur_cursor_;
+            const int64_t n = cur_n_;
+
+            // 动态领取：谁空谁抢，不预先划区间。
+            // ImageNet 单张耗时差一个数量级以上，静态切分会被自己区间里最慢的那张拖住。
+            for (int64_t k; (k = ticket_.fetch_add(1, std::memory_order_relaxed)) < n; )
+            {
+                try
+                {
+                    diags_[static_cast<size_t>(k)] =load_one_into(*out, k, order_[static_cast<size_t>(base + k)]);
+                }
+                catch (...)
+                {
+                    // 异常绝不能逃出 jthread：那会直接 std::terminate，外面的 catch 接不到。
+                    // 记下第一个，然后【继续领】—— 否则剩下的任务没人收齐，主线程死锁。
+                    std::lock_guard<std::mutex> lk(err_mu_);
+                    if (!err_) err_ = std::current_exception();
+                }
+            }
+
+            done_bar_->arrive_and_wait();
+        }
+    }
 
     DecodeDiag ImageNetLoader::load_one_into(ImageBatch& out, int64_t slot, int64_t index) const
     {
@@ -280,26 +350,53 @@ namespace prkd::data
         out.labels = torch::empty({ n }, torch::kInt64);
         out.indices.resize(static_cast<size_t>(n));
 
-        // 按批收集，末尾只加一次锁 —— 每张图加锁的代价比读一张图高得多。
-        int64_t n_incomplete = 0;
-        int64_t n_warned = 0;
-
+        // 主线程先把 indices / labels 填好，worker 只碰 images 和 diags_（两者不重叠）。
         for (int64_t k = 0; k < n; ++k)
         {
             const int64_t idx = order_[static_cast<size_t>(cursor_ + k)];
             out.indices[static_cast<size_t>(k)] = idx;
             out.labels[k] = labels_[static_cast<size_t>(idx)];
+        }
 
-            const DecodeDiag d = load_one_into(out, k, idx);
-            if (!d.complete)
+        diags_.assign(static_cast<size_t>(n), DecodeDiag{});
+
+        int64_t n_incomplete = 0;
+        int64_t n_warned = 0;
+
+        if (opt_.workers <= 0)
+        {
+            for (int64_t k = 0; k < n; ++k)
             {
-                ++n_incomplete;          // 更严重的那一档
-            }
-            else if (d.warnings > 0)
-            {
-                ++n_warned;              // 有警告但读完了
+                diags_[static_cast<size_t>(k)] = load_one_into(out, k, order_[static_cast<size_t>(cursor_ + k)]);
             }
         }
+        else
+        {
+            // 发布本批：先把共享区写好，再 arrive —— barrier 负责把可见性传给 worker。
+            cur_out_ = &out;
+            cur_cursor_ = cursor_;
+            cur_n_ = n;
+            ticket_.store(0, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> lk(err_mu_);
+                err_ = nullptr;
+            }
+
+            start_bar_->arrive_and_wait();   // 放行：worker 从这儿开始抢号
+            done_bar_->arrive_and_wait();    // 收齐：所有 worker 都干完了
+
+            cur_out_ = nullptr;
+            if (err_) std::rethrow_exception(err_);
+        }
+
+        // 诊断收口：只在主线程读，worker 已全部做完（barrier 建立了 happens-before）。
+        for (int64_t k = 0; k < n; ++k)
+        {
+            const DecodeDiag& d = diags_[static_cast<size_t>(k)];
+            if (!d.complete) ++n_incomplete;          // 更严重的那一档
+            else if (d.warnings > 0) ++n_warned;      // 有警告但读完了
+        }
+
         cursor_ += n;
 
         const double dt = std::chrono::duration<double>(

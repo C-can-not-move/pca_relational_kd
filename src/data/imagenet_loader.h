@@ -1,4 +1,4 @@
-// src/data/imagenet_loader.h —— 直接从原始 JPEG 读，不做任何中间二进制缓存
+﻿// src/data/imagenet_loader.h —— 直接从原始 JPEG 读，不做任何中间二进制缓存
 //
 // 设计上的四条：
 //   ① 索引与迭代分开。索引只在构造时建一次、完全确定；每 epoch 只换 order。
@@ -13,27 +13,35 @@
 //   要求 GCC >= 11 / MSVC >= 19.29。GCC 9 编不过。
 #pragma once
 
+// ---- 第三方 ----
 #include <torch/torch.h>
 
-#include <algorithm>
-#include <atomic>
-#include <cctype>
-#include <chrono>
-#include <condition_variable>
+// ---- 标准库：基础类型与容器 ----
 #include <cstdint>
-#include <cstring>
-#include <deque>
+#include <string>
+#include <vector>
+
+// ---- 标准库：文件与流 ----
 #include <filesystem>
 #include <fstream>
-#include <latch>
-#include <memory>
-#include <mutex>
-#include <numeric>
-#include <semaphore>
-#include <stdexcept>
-#include <string>
-#include <thread>
-#include <vector>
+
+// ---- 标准库：并发（C++20）----
+// 需要 GCC >= 11 / MSVC >= 19.29。CMakeLists 里已经按这个拦过了。
+#include <atomic>
+#include <barrier>      // start_bar_ / done_bar_
+#include <exception>    // std::exception_ptr
+#include <memory>       // std::unique_ptr
+#include <mutex>        // err_mu_
+#include <thread>       // std::jthread
+
+// ---- 标准库：杂项 ----
+#include <algorithm>    // std::sort / std::min（build_index 与 next 里用）
+#include <cctype>       // std::tolower（扩展名白名单）
+#include <chrono>       // steady_clock
+#include <cstring>
+#include <numeric>      // std::iota（reset_order）
+#include <stdexcept>    // std::runtime_error
+
 namespace prkd::data
 {
     // ------------------------------------------------------------------------
@@ -142,12 +150,7 @@ namespace prkd::data
         const LoaderOpts& options() const;
         LoaderStats stats() const;
 
-    private:
-        struct Task                 // 一条取图任务
-        {
-            int64_t index = 0;      // 样本下标
-            int64_t slot = 0;       // 填进 slots_ 的哪一格
-        };
+        void worker_loop();              // 每个 worker 线程的主循环
 
         void build_index_imagefolder();
         void reset_order();
@@ -170,16 +173,31 @@ namespace prkd::data
         std::vector<int64_t>     order_;     // 本轮访问顺序
         int64_t                  cursor_ = 0;
 
-        // ---- 并发：生产者（worker 线程）→ 消费者（next） ----
-        std::vector<std::jthread>   workers_;
-        std::deque<Task>            q_;
-        mutable std::mutex          q_mu_;
-        std::condition_variable     q_not_empty_;
-        std::condition_variable     q_not_full_;
-        std::counting_semaphore<>   empty_slots_;      // 构造时初始化成 queue_depth
-        std::vector<torch::Tensor>  slots_;            // 当前 batch 的写入口
-        std::unique_ptr<std::latch> done_;             // 每个 batch 一个，BS 归零
-        std::atomic<bool>           stop_{ false };
+        // ---- 并发：一批内动态领取 ----
+        //
+        // 为什么不是队列：一批的任务集合在开头就完全确定（就是这 n 个下标），
+        // 动态领取就退化成"抢一个原子计数器"。每张一次 fetch_add（~30 ns），
+        // 比 mutex + deque + notify（0.5–2 µs）便宜十几倍。
+        //
+        // 为什么不是静态切分：ImageNet 的图从 3 万到 1 千万像素，单张耗时差一个
+        // 数量级以上。静态切分等于"等自己区间里最慢的那张"，会白等近一倍。
+        //
+        // 两级同步用 std::barrier（可重复使用），而不是每批重建 latch ——
+        // 重建就得管"worker 可能正卡在旧的那个上面"的生命周期问题。
+        std::vector<std::jthread>        workers_;
+        std::unique_ptr<std::barrier<>>  start_bar_;    // nw + 1：放行本批
+        std::unique_ptr<std::barrier<>>  done_bar_;     // nw + 1：收齐本批
+        std::atomic<int64_t>             ticket_{ 0 };  // 本批抢到第几张
+        std::atomic<bool>                stop_{ false };
+
+        // 每批发布给 worker 的东西，只在 next() 期间有效（可见性由 barrier 建立）
+        ImageBatch*  cur_out_ = nullptr;
+        int64_t      cur_cursor_ = 0;      // 本批第 0 张对应 order_ 的哪个位置
+        int64_t      cur_n_ = 0;
+
+        std::vector<DecodeDiag>  diags_;   // 每批 n 个，用 slot 直接索引
+        std::exception_ptr       err_;     // 第一个 worker 异常，由 next() 重抛
+        std::mutex               err_mu_;
 
         // ---- 统计 ----
         mutable std::mutex stats_mu_;
