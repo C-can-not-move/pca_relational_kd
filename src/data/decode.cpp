@@ -1,5 +1,7 @@
 ﻿#include "data/decode.h"
 
+#include <cstring>   // std::memset：MSVC 靠 <stdio.h> 间接带进来，glibc 不会
+
 
 extern "C"
 {
