@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdint>
 #include <string>
@@ -30,7 +30,7 @@ namespace prkd::cfg
         int64_t prefetch   = 4;      // 预取池深度：1 = 退化成同步等齐
         int64_t short_side = 256;    // val 的 Resize 短边；V1 权重 256，V2 用 232
         int64_t crop       = 224;
-        bool    train      = true;
+        bool    is_train   = true;
     };
 
     struct DebugSettings

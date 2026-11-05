@@ -1,4 +1,4 @@
-// src/pca_relational_kd.cpp —— 数据管线冒烟测试的入口。
+﻿// src/pca_relational_kd.cpp —— 数据管线冒烟测试的入口。
 //
 // 唯一的命令行参数是【配置文件路径】，其余全部来自 prkd.ini。
 // 断言都在 test_unit/loader_check.*，这里只负责：读配置 → 组装 loader → 跑一轮。
@@ -35,12 +35,13 @@ int main(int argc, char** argv)
         prkd::data::LoaderOpts opt;
         opt.batch_size = st.loader.batch;
         opt.workers    = st.loader.workers;
+        opt.prefetch_depth = st.loader.prefetch;
         opt.short_side = st.loader.short_side;
         opt.crop       = st.loader.crop;
-        opt.train      = st.loader.train;
+        opt.is_train   = st.loader.is_train;
 
         const std::string data_dir =
-            st.run.data_dir + (st.loader.train ? "/train" : "/val");
+            st.run.data_dir + (st.loader.is_train ? "/train" : "/val");
         const uint64_t seed = static_cast<uint64_t>(st.run.seed);
 
         std::printf("\n===== %s =====\n", data_dir.c_str());
@@ -61,6 +62,15 @@ int main(int argc, char** argv)
 
         // ④ 解码体检
         prkd::test_unit::print_decode_health(ld.stats());
+
+        // ⑤ 坏图存档（有坏图才写；全量清单得离线扫）
+        if (ld.bad_count() > 0)
+        {
+            const std::string bad_path = st.run.out_dir + "/bad_images.tsv";
+            const int64_t written = prkd::test_unit::write_bad_images(ld, bad_path);
+            std::printf("坏图存档    : %s（%lld 条里的前 %lld 条）\n",
+                bad_path.c_str(), (long long)ld.bad_count(), (long long)written);
+        }
 
         std::printf("\n判据（顺序可复现）：同一条命令跑两次，上面的 indices[0..4] 必须逐位相同。\n");
         std::printf("OK\n");

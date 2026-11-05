@@ -37,7 +37,7 @@ namespace prkd::data
             return mix(mix(mix(s) ^ static_cast<uint64_t>(epoch)) ^ static_cast<uint64_t>(index));
         }
 
-        // 把文件读进【调用方提供的缓冲】，返回实际长度。
+		// 把文件读进【调用方提供的缓冲】。返回的是原始文件大小，不是解码后的图像尺寸。
         //
         // 不返回 vector：那样每张图一次分配，而且 vector 的 size 构造会清零这 n 个字节，
         // 紧接着 read 又全部覆盖 —— 平均 108 KB × 128 万张 = 每 epoch 138 GB 的无用内存写。
@@ -59,6 +59,7 @@ namespace prkd::data
             std::ifstream f(path, std::ios::binary);
             if (!f) throw std::runtime_error("ImageNetLoader: 打不开 " + path);
 
+            // read 按原始字节读取，不遇到换行就停
             f.read(reinterpret_cast<char*>(buf.data()), static_cast<std::streamsize>(want));
 
             // 缓冲是复用的：读短了的话，buf 里留着【上一张图】的数据。
@@ -87,9 +88,9 @@ namespace prkd::data
         build_index_imagefolder();
 
         // drop_last 在「样本数 < batch_size」时会把 order_ 截成 0 项，
-        // 于是训练循环一个 batch 都读不到 —— 这是配置错，不是"刚好这么设计"。
-        // 在构造时就说清楚，别等到循环打印出 num_batches = 0 才发现。
-        if (opt_.train && static_cast<int64_t>(paths_.size()) < opt_.batch_size)
+        // 于是训练循环一个 batch 都读不到 —— 这是配置错。
+        // 在构造时说明，别等到循环打印出 num_batches = 0 才发现。
+        if (opt_.is_train && static_cast<int64_t>(paths_.size()) < opt_.batch_size)
         {
             throw std::runtime_error(
                 "ImageNetLoader: 训练模式下 drop_last 会得到 0 个 batch（样本 "
@@ -98,7 +99,7 @@ namespace prkd::data
         }
 
         start_epoch(0);
-        // worker 线程常驻：起一次，析构时停。每批只靠两个 barrier 放行/收齐。
+        // worker 线程常驻：起一次，析构时停。每批靠任务队列 + remaining 计数，不用 barrier。
         start_workers();
     }
 
@@ -191,103 +192,245 @@ namespace prkd::data
         order_.resize(paths_.size());
         std::iota(order_.begin(), order_.end(), static_cast<int64_t>(0));
 
-        if (!opt_.train)
+        const int64_t bs = opt_.batch_size;
+
+        if (opt_.is_train)
         {
-            return;                       // 验证集不洗，顺序固定
+            std::mt19937_64 rng(seed_order(seed_, epoch_));
+            std::shuffle(order_.begin(), order_.end(), rng);
+
+            // drop_last：把尾巴截掉，让它根本不存在。
+            // 关系类损失（RKD-D/A）在 n 太小时会算出 NaN，所以训练必须整除。
+            const int64_t nb = static_cast<int64_t>(order_.size()) / bs;
+            order_.resize(static_cast<size_t>(nb * bs));
         }
 
-        std::mt19937_64 rng(seed_order(seed_, epoch_));
-        std::shuffle(order_.begin(), order_.end(), rng);
+        const int64_t n  = static_cast<int64_t>(order_.size());
+        const int64_t nb = opt_.is_train ? (n / bs) : ((n + bs - 1) / bs);
 
-        // drop_last：把尾巴截掉，让它根本不存在。
-        // 关系类损失（RKD-D/A）在 n 太小时会算出 NaN，所以训练必须整除。
-        const int64_t bs = opt_.batch_size;
-        const int64_t nb = static_cast<int64_t>(order_.size()) / bs;
-        order_.resize(static_cast<size_t>(nb * bs));
+        // 每个批的起点。末项 = order_.size()，所以批 b 的范围是 [pos[b], pos[b+1])。
+        // ★ 末批必须用 min 夹住 —— val 的 nb*bs 会超过 n。
+        batch_pos_.resize(static_cast<size_t>(nb) + 1);
+        for (int64_t b = 0; b <= nb; ++b)
+        {
+            batch_pos_[static_cast<size_t>(b)] = std::min(b * bs, n);
+        }
+
+        batch_done_.assign(static_cast<size_t>(nb), false);
+        batch_slot_.assign(static_cast<size_t>(nb), -1);
     }
-
     void ImageNetLoader::start_epoch(int64_t epoch)
     {
         epoch_ = epoch;
         reset_order();
-        cursor_ = 0;
+
+        // 清池：把在飞的批全部作废。
+        // 正常流程下 epoch 结束时池里已经没有未交付的批，所以这里通常是空操作；
+        // 提前 break / 异常时才有东西丢。那些批不浪费 —— 派生种子保证重算逐位相同。
+        {
+            std::lock_guard<std::mutex> lk(q_mu_);
+            q_.clear();
+            free_slots_.clear();
+            for (int64_t i = 0; i < static_cast<int64_t>(pool_.size()); ++i)
+            {
+                free_slots_.push_back(i);
+            }
+            std::fill(batch_done_.begin(), batch_done_.end(), false);
+            std::fill(batch_slot_.begin(), batch_slot_.end(), -1);
+        }
+
+        cursor_        = 0;
+        next_batch_    = 0;
+        delivered_pos_ = 0;
+
+        {
+            std::lock_guard<std::mutex> lk(err_mu_);
+            err_ = nullptr;
+        }
+        has_err_.store(false, std::memory_order_relaxed);
+
         {
             std::lock_guard<std::mutex> lk(stats_mu_);
             stats_ = LoaderStats{};
         }
+
+        // bad_ 不清 —— 那是"这份数据长什么样"的体检结果，跨 epoch 累计更有意义。
     }
-
-    void ImageNetLoader::start_workers() 
+    // 池【永远存在】—— 同步路径（workers = 0）也要用它，只是池深退化成 1、
+    // 并且没有 worker 线程，由主线程自己把队列干完。
+    void ImageNetLoader::start_workers()
     {
-        if (opt_.workers <= 0) return;
+        const int64_t depth = (opt_.workers > 0)
+            ? std::max<int64_t>(1, opt_.prefetch_depth)
+            : 1;
 
-        const auto nw = static_cast<std::ptrdiff_t>(opt_.workers);
-        start_bar_ = std::make_unique<std::barrier<>>(nw + 1);
-        done_bar_ = std::make_unique<std::barrier<>>(nw + 1);
+        // PoolSlot 里有 std::atomic，既不可拷贝也不可移动 ——
+        // 所以 assign / resize / emplace_back 都不行（它们要求 MoveInsertable）。
+        // vector(n) 只需要 DefaultInsertable；整体 move 赋值只偷 buffer，不搬元素。
+        pool_ = std::vector<PoolSlot>(static_cast<size_t>(depth));
+
+        {
+            std::lock_guard<std::mutex> lk(q_mu_);
+            q_.clear();
+            free_slots_.clear();
+            for (int64_t i = 0; i < depth; ++i) free_slots_.push_back(i);
+        }
+
         stop_.store(false, std::memory_order_relaxed);
+        has_err_.store(false, std::memory_order_relaxed);
+
+        if (opt_.workers <= 0) return;      // 同步路径：只有池，没有线程
 
         workers_.reserve(static_cast<size_t>(opt_.workers));
         for (int64_t i = 0; i < opt_.workers; ++i)
         {
             workers_.emplace_back([this] { worker_loop(); });
         }
-    }   
-    // 只能在构造末尾，或析构里面调用。
-    // 否则 worker 可能正卡在 done_bar_ 上，而主线程不再去收齐 —— 永远挂住。
-    void ImageNetLoader::stop_workers() 
+    }
+
+    // 只能在【没有批在飞】的时候调：构造末尾、start_epoch 之前、或析构里。
+    void ImageNetLoader::stop_workers()
     {
-        if (workers_.empty()) return;
+        {
+            std::lock_guard<std::mutex> lk(q_mu_);
+            stop_.store(true, std::memory_order_relaxed);
+            q_.clear();                     // 丢弃未领取的任务
+        }
+        q_cv_.notify_all();
+        ready_cv_.notify_all();
 
-        stop_.store(true, std::memory_order_relaxed);
+        workers_.clear();                   // jthread 析构 = request_stop + join
 
-        // 放行一次：worker 从 start_bar_ 出来后立刻看到 stop_ 并返回。
-        // 它们不会再走到 done_bar_，所以这里绝对不能等 done_bar_。
-        start_bar_->arrive_and_wait();
-
-        workers_.clear();          // jthread 析构 = request_stop + join
-        start_bar_.reset();
-        done_bar_.reset();
-    } 
+        {
+            std::lock_guard<std::mutex> lk(q_mu_);
+            free_slots_.clear();
+        }
+        pool_.clear();
+    }
 
     void ImageNetLoader::worker_loop()
     {
-        // 这里不调 torch::set_num_threads(1)。
-        //
-        // PyTorch 的 worker 会调，是因为它是独立【进程】，设置只影响自己那份 ATen 线程池。
-        // 而这里是线程，torch::set_num_threads 是进程级全局量：
-        // 在这儿改成 1，主线程的训练前向/反向也会跟着变单线程。
-        // 真要处理 ATen 线程池和 worker 抢核，得在进程级统一决定，不能由 loader 单方面改。
-
         for (;;)
         {
-            start_bar_->arrive_and_wait();
-            if (stop_.load(std::memory_order_relaxed)) return;
-
-            ImageBatch* const out = cur_out_;
-            const int64_t base = cur_cursor_;
-            const int64_t n = cur_n_;
-
-            // 动态领取：谁空谁抢，不预先划区间。
-            // ImageNet 单张耗时差一个数量级以上，静态切分会被自己区间里最慢的那张拖住。
-            for (int64_t k; (k = ticket_.fetch_add(1, std::memory_order_relaxed)) < n; )
+            Task t;
             {
-                try
-                {
-                    diags_[static_cast<size_t>(k)] =load_one_into(*out, k, order_[static_cast<size_t>(base + k)]);
-                }
-                catch (...)
-                {
-                    // 异常绝不能逃出 jthread：那会直接 std::terminate，外面的 catch 接不到。
-                    // 记下第一个，然后【继续领】—— 否则剩下的任务没人收齐，主线程死锁。
-                    std::lock_guard<std::mutex> lk(err_mu_);
-                    if (!err_) err_ = std::current_exception();
-                }
+                std::unique_lock<std::mutex> lk(q_mu_);
+                q_cv_.wait(lk, [&] {
+                    return stop_.load(std::memory_order_relaxed) || !q_.empty();
+                });
+                if (q_.empty()) return;     // stop_ 且队列已空
+                t = q_.front();
+                q_.pop_front();
             }
-
-            done_bar_->arrive_and_wait();
+            run_one_task(t);
         }
     }
 
+    // 一张图：worker 和同步路径共用这一份逻辑。
+    void ImageNetLoader::run_one_task(const Task& t)
+    {
+        PoolSlot& ps = pool_[static_cast<size_t>(t.slot)];
+
+        try
+        {
+            const DecodeDiag d = load_one_into(ps.batch, t.k, t.index);
+            ps.diags[static_cast<size_t>(t.k)] = d;
+
+            // ---- 有损：不抛，计数 + 记路径（只记前 20 条）----
+            if (!d.complete || d.warnings > 0)
+            {
+                std::lock_guard<std::mutex> lk(bad_mu_);
+                ++bad_count_;
+                if (bad_.size() < static_cast<size_t>(kMaxBadPaths))
+                {
+                    bad_.push_back(BadImage{
+                        paths_[static_cast<size_t>(t.index)],
+                        d.complete ? ("解码警告 x" + std::to_string(d.warnings))
+                                   : std::string("数据不全（缺口是 0 黑）") });
+                }
+            }
+        }
+        catch (...)
+        {
+            // ---- 致命：异常绝不能逃出 jthread（会 std::terminate）----
+            {
+                std::lock_guard<std::mutex> lk(err_mu_);
+                if (!err_) err_ = std::current_exception();
+            }
+            has_err_.store(true, std::memory_order_relaxed);
+        }
+
+        // 最后一个做完的人负责报齐。
+        // ★ 异常路径上也必须减 —— 否则 remaining 永远到不了 0，主线程死锁。
+        // ★ acq_rel：给"前面的写"和"读到 0 的那个人"之间建立 happens-before。
+        if (ps.remaining.fetch_sub(1, std::memory_order_acq_rel) == 1)
+        {
+            std::lock_guard<std::mutex> lk(q_mu_);
+            batch_done_[static_cast<size_t>(ps.batch_idx)] = true;
+            ready_cv_.notify_one();
+        }
+    }
+
+    // 有空槽就发布新批 —— 发布【不等】完成，这是池化能做重叠的原因。
+    void ImageNetLoader::publish_more()
+    {
+        std::lock_guard<std::mutex> lk(q_mu_);
+
+        while (!free_slots_.empty() &&
+               cursor_ < static_cast<int64_t>(order_.size()))
+        {
+            // cursor_ 一定等于某个批的起点，所以批号可以推出来，不必另存计数器
+            const int64_t b = static_cast<int64_t>(
+                std::lower_bound(batch_pos_.begin(), batch_pos_.end(), cursor_)
+                - batch_pos_.begin());
+
+            const int64_t n = batch_pos_[static_cast<size_t>(b) + 1]
+                            - batch_pos_[static_cast<size_t>(b)];
+
+            const int64_t slot = free_slots_.front();
+            free_slots_.pop_front();
+
+            PoolSlot& ps = pool_[static_cast<size_t>(slot)];
+            ps.batch.images = torch::empty({ n, 3, opt_.crop, opt_.crop }, torch::kFloat32);
+            ps.batch.labels = torch::empty({ n }, torch::kInt64);
+            ps.batch.indices.resize(static_cast<size_t>(n));
+            ps.diags.assign(static_cast<size_t>(n), DecodeDiag{});
+            ps.n         = n;
+            ps.batch_idx = b;
+            ps.order_pos = cursor_;
+            ps.remaining.store(n, std::memory_order_relaxed);
+
+            batch_slot_[static_cast<size_t>(b)] = slot;
+            batch_done_[static_cast<size_t>(b)] = false;
+
+            for (int64_t k = 0; k < n; ++k)
+            {
+                const int64_t idx = order_[static_cast<size_t>(cursor_ + k)];
+                ps.batch.indices[static_cast<size_t>(k)] = idx;
+                ps.batch.labels[k] = labels_[static_cast<size_t>(idx)];
+                q_.push_back(Task{ slot, k, idx });
+            }
+            cursor_ += n;
+        }
+
+        q_cv_.notify_all();
+    }
+
+    // 同步路径：主线程自己把 q_ 里的任务全干完。
+    void ImageNetLoader::drain_inline()
+    {
+        for (;;)
+        {
+            Task t;
+            {
+                std::lock_guard<std::mutex> lk(q_mu_);
+                if (q_.empty()) return;
+                t = q_.front();
+                q_.pop_front();
+            }
+            run_one_task(t);
+        }
+    }
     DecodeDiag ImageNetLoader::load_one_into(ImageBatch& out, int64_t slot, int64_t index) const
     {
         // 每线程一份缓冲：大小只增不减，避免每张图一次分配 + 一次清零。
@@ -304,7 +447,7 @@ namespace prkd::data
 
         auto x = to_chw01(bmp.data.data(), bmp.h, bmp.w);
 
-        if (opt_.train)
+        if (opt_.is_train)
         {
             // 每样本一个独立 RNG：与线程、调用顺序、epoch 都无关 ⇒ 可复现。
             // ★ 两个 random_* 必须共用这个 rng 且按此顺序调用，对应 torchvision 的 Compose。
@@ -330,9 +473,39 @@ namespace prkd::data
 
     bool ImageNetLoader::has_next() const
     {
-        return cursor_ < static_cast<int64_t>(order_.size());
+        // ★ 必须是【交付】口径，不是 cursor_。
+        //   池化之后 cursor_ 领先交付进度好几批，用它当判据会提早结束 epoch。
+        return delivered_pos_ < static_cast<int64_t>(order_.size());
     }
 
+    void ImageNetLoader::seek(int64_t pos)
+    {
+        if (pos < 0 || pos > static_cast<int64_t>(order_.size()))
+        {
+            throw std::runtime_error("ImageNetLoader::seek(): 位置越界");
+        }
+
+        // 必须恰好落在某个批边界上。
+        // 这道闸门正好挡住「改过 batch_size 却拿旧断点恢复」——
+        // 没有它的话，恢复会静默错位到某一批的中间。
+        if (!std::binary_search(batch_pos_.begin(), batch_pos_.end(), pos))
+        {
+            throw std::runtime_error(
+                "ImageNetLoader::seek(): 位置 " + std::to_string(pos) +
+                " 不在批边界上 —— 是不是改过 batch_size？");
+        }
+
+        if (delivered_pos_ != 0 || cursor_ != 0 || !q_.empty())
+        {
+            throw std::logic_error(
+                "ImageNetLoader::seek(): 只能在 start_epoch() 之后、取数据之前调");
+        }
+
+        next_batch_ = static_cast<int64_t>(
+            std::lower_bound(batch_pos_.begin(), batch_pos_.end(), pos) - batch_pos_.begin());
+        cursor_        = pos;
+        delivered_pos_ = pos;
+    }
     ImageBatch ImageNetLoader::next()
     {
         if (!has_next())
@@ -341,63 +514,61 @@ namespace prkd::data
         }
 
         const auto t0 = std::chrono::steady_clock::now();
+        const int64_t b = next_batch_;      // 这一轮要交付的批号
 
-        const int64_t n = std::min<int64_t>(opt_.batch_size,
-            static_cast<int64_t>(order_.size()) - cursor_);
+        // 发布【不等】完成 —— 这是池化的全部意义
+        publish_more();
 
-        ImageBatch out;
-        out.images = torch::empty({ n, 3, opt_.crop, opt_.crop }, torch::kFloat32);
-        out.labels = torch::empty({ n }, torch::kInt64);
-        out.indices.resize(static_cast<size_t>(n));
+        // 同步路径：主线程自己把这一批干完
+        if (opt_.workers <= 0) drain_inline();
 
-        // 主线程先把 indices / labels 填好，worker 只碰 images 和 diags_（两者不重叠）。
-        for (int64_t k = 0; k < n; ++k)
+        // 等【该交付的那一批】完成。别的批先完成也没用 —— next_batch_ 保证顺序。
         {
-            const int64_t idx = order_[static_cast<size_t>(cursor_ + k)];
-            out.indices[static_cast<size_t>(k)] = idx;
-            out.labels[k] = labels_[static_cast<size_t>(idx)];
+            std::unique_lock<std::mutex> lk(q_mu_);
+            ready_cv_.wait(lk, [&] {
+                return batch_done_[static_cast<size_t>(b)]
+                    || has_err_.load(std::memory_order_relaxed);
+            });
         }
 
-        diags_.assign(static_cast<size_t>(n), DecodeDiag{});
-
-        int64_t n_incomplete = 0;
-        int64_t n_warned = 0;
-
-        if (opt_.workers <= 0)
+        // 致命错误：整个 loader 停，半成品【不交付】
+        if (has_err_.load(std::memory_order_relaxed))
         {
-            for (int64_t k = 0; k < n; ++k)
-            {
-                diags_[static_cast<size_t>(k)] = load_one_into(out, k, order_[static_cast<size_t>(cursor_ + k)]);
-            }
-        }
-        else
-        {
-            // 发布本批：先把共享区写好，再 arrive —— barrier 负责把可见性传给 worker。
-            cur_out_ = &out;
-            cur_cursor_ = cursor_;
-            cur_n_ = n;
-            ticket_.store(0, std::memory_order_relaxed);
-            {
-                std::lock_guard<std::mutex> lk(err_mu_);
-                err_ = nullptr;
-            }
-
-            start_bar_->arrive_and_wait();   // 放行：worker 从这儿开始抢号
-            done_bar_->arrive_and_wait();    // 收齐：所有 worker 都干完了
-
-            cur_out_ = nullptr;
+            std::lock_guard<std::mutex> lk(err_mu_);
             if (err_) std::rethrow_exception(err_);
         }
 
-        // 诊断收口：只在主线程读，worker 已全部做完（barrier 建立了 happens-before）。
-        for (int64_t k = 0; k < n; ++k)
+        // 取走 + 立刻还槽。
+        // ★ 忘了 free_slots_.push_back 的话，池会越用越少，几百批后死锁在"没有空槽"。
+        int64_t slot = -1;
+        int64_t n = 0;
+        ImageBatch out;
+        std::vector<DecodeDiag> diag;
         {
-            const DecodeDiag& d = diags_[static_cast<size_t>(k)];
-            if (!d.complete) ++n_incomplete;          // 更严重的那一档
-            else if (d.warnings > 0) ++n_warned;      // 有警告但读完了
+            std::lock_guard<std::mutex> lk(q_mu_);
+            slot = batch_slot_[static_cast<size_t>(b)];
+            batch_slot_[static_cast<size_t>(b)] = -1;
+            batch_done_[static_cast<size_t>(b)] = false;
+            n    = pool_[static_cast<size_t>(slot)].n;
+            out  = std::move(pool_[static_cast<size_t>(slot)].batch);
+            diag = std::move(pool_[static_cast<size_t>(slot)].diags);
+            free_slots_.push_back(slot);
         }
 
-        cursor_ += n;
+        ++next_batch_;
+        delivered_pos_ = batch_pos_[static_cast<size_t>(next_batch_)];
+
+        publish_more();                     // 腾出的槽立刻补发下一批
+
+        // ---- 诊断收口 + 统计 ----
+        int64_t n_incomplete = 0;
+        int64_t n_warned = 0;
+        for (int64_t k = 0; k < n; ++k)
+        {
+            const DecodeDiag& d = diag[static_cast<size_t>(k)];
+            if (!d.complete)         ++n_incomplete;   // 更严重的那一档
+            else if (d.warnings > 0) ++n_warned;       // 有警告但读完了
+        }
 
         const double dt = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - t0).count();
@@ -410,7 +581,6 @@ namespace prkd::data
         }
         return out;
     }
-
     int64_t ImageNetLoader::size() const
     {
         return static_cast<int64_t>(paths_.size());
@@ -418,21 +588,16 @@ namespace prkd::data
 
     int64_t ImageNetLoader::num_batches() const
     {
-        const int64_t n = static_cast<int64_t>(order_.size());
-        if (opt_.train)
-        {
-            return n / opt_.batch_size;                       // drop_last，整除
-        }
-        return (n + opt_.batch_size - 1) / opt_.batch_size;   // 向上取整，末批可短
+        // 唯一来源是 batch_pos_ —— 再单独算一遍 n/bs 总有一天会和它对不上
+        return static_cast<int64_t>(batch_pos_.size()) - 1;
     }
-
     int64_t ImageNetLoader::num_classes() const
     {
         return static_cast<int64_t>(classes_.size());
     }
 
     int64_t ImageNetLoader::epoch()  const { return epoch_; }
-    bool    ImageNetLoader::train()  const { return opt_.train; }
+    bool    ImageNetLoader::is_train()  const { return opt_.is_train; }
 
     const std::vector<std::string>& ImageNetLoader::classes() const { return classes_; }
     const LoaderOpts&               ImageNetLoader::options() const { return opt_; }

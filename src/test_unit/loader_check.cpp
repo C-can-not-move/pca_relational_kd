@@ -2,6 +2,8 @@
 #include "test_unit/loader_check.h"
 
 #include <cstdio>
+#include <filesystem>
+#include <fstream>
 #include <stdexcept>
 
 namespace prkd::test_unit
@@ -23,10 +25,10 @@ namespace prkd::test_unit
         const int64_t bs = opt.batch_size;
 
         // drop_last 只对 train 生效：train 整除，val 向上取整（末批可短）
-        const int64_t expect = opt.train ? n / bs : (n + bs - 1) / bs;
+        const int64_t expect = opt.is_train ? n / bs : (n + bs - 1) / bs;
 
         std::printf("模式        : %s\n",
-            opt.train ? "train（洗牌，drop_last）" : "val（不洗牌，末批可短）");
+            opt.is_train ? "train（洗牌，drop_last）" : "val（不洗牌，末批可短）");
         std::printf("类数        : %lld\n", (long long)ld.num_classes());
         std::printf("样本数      : %lld\n", (long long)n);
         std::printf("batch_size  : %lld\n", (long long)bs);
@@ -45,7 +47,7 @@ namespace prkd::test_unit
         {
             throw std::runtime_error("索引检查: num_batches 与期望不符");
         }
-        if (opt.train && n < bs)
+        if (opt.is_train && n < bs)
         {
             throw std::runtime_error("索引检查: 训练模式下 drop_last 会得到 0 个 batch");
         }
@@ -87,9 +89,13 @@ namespace prkd::test_unit
             if (idx < 0 || idx >= ld.size()) fail(k, "indices 越界");
         }
 
-        // ---- 有限性 ----
-        // 归一化之后的值域大约 [-3, 3]；出现 nan/inf 说明变换链里有除零或空张量。
-        if (!torch::isfinite(b.images).all().item<bool>()) fail(k, "images 里有 nan 或 inf");
+        // ---- 有限性（只查前 10 批）----
+        // 这一项要把整批 960 万个数扫一遍，intra=1 时单线程约 75 ms/批。
+        // 每批都查会把吞吐数字彻底掩盖掉 —— 它不是训练路径的一部分，是测试。
+        if (k < 10 && !torch::isfinite(b.images).all().item<bool>())
+        {
+            fail(k, "images 里有 nan 或 inf");
+        }
     }
 
     void check_workers_equivalence(const std::string& data_dir,
@@ -135,7 +141,10 @@ namespace prkd::test_unit
 
     void run_one_epoch(data::ImageNetLoader& ld)
     {
+        using clk = std::chrono::steady_clock;
+
         ld.start_epoch(0);
+        const auto t0 = clk::now();
 
         int64_t b = 0;
         while (ld.has_next())
@@ -150,9 +159,15 @@ namespace prkd::test_unit
             if (b % 50 == 0) std::printf("  ... 已读 %lld 个 batch\n", (long long)b);
         }
 
+        const double wall = std::chrono::duration<double>(clk::now() - t0).count();
+
         const auto st = ld.stats();
         std::printf("\n读了 %lld 个 batch / %lld 张\n", (long long)b, (long long)st.images);
-        std::printf("吞吐 %.1f img/s   总耗时 %.2f 秒\n", st.img_per_sec(), st.seconds);
+        std::printf("墙钟           %.2f 秒   → %.1f img/s\n",
+            wall, wall > 0.0 ? (double)st.images / wall : 0.0);
+        std::printf("其中 loader 侧  %.2f 秒   → %.1f img/s   （next() 内部累计）\n",
+            st.seconds, st.img_per_sec());
+        std::printf("（墙钟含每批校验；两者之差 = 校验占的时间）\n");
     }
 
     void print_batch_head(const data::ImageBatch& b, int64_t k)
@@ -189,5 +204,28 @@ namespace prkd::test_unit
         std::printf("%s\n", (incomplete + warned) == 0
             ? "→ 这一轮读到的图全部干净"
             : "→ 有坏图（按要求只计数、不跳过）");
+    }
+    int64_t write_bad_images(const data::ImageNetLoader& ld, const std::string& path)
+    {
+        namespace fs = std::filesystem;
+
+        const fs::path p(path);
+        if (!p.parent_path().empty())
+        {
+            std::error_code ec;
+            fs::create_directories(p.parent_path(), ec);
+        }
+
+        std::ofstream f(p);
+        if (!f) throw std::runtime_error("写不了坏图清单: " + path);
+
+        f << "path\twhy\n";
+        for (const auto& bad : ld.bad_images())
+        {
+            f << bad.path << '\t' << bad.why << '\n';
+        }
+
+        if (!f) throw std::runtime_error("写坏图清单时出错: " + path);
+        return static_cast<int64_t>(ld.bad_images().size());
     }
 }  // namespace prkd::test_unit

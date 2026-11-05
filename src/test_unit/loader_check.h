@@ -41,4 +41,9 @@ namespace prkd::test_unit
 
     // 解码体检：干净 / 有警告 / 数据不全，三者互斥。
     void print_decode_health(const data::LoaderStats& st);
+
+    // 把解码不干净的图写成存档（TSV：path<TAB>why），一行一条。
+    // 只写 loader 记下的前 kMaxBadPaths 条 —— 全量清单得离线扫。
+    // 返回写入条数；目录会自动建；打不开抛异常。
+    int64_t write_bad_images(const data::ImageNetLoader& ld, const std::string& path);
 }

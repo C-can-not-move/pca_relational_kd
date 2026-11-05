@@ -1,4 +1,4 @@
-#include "config.h"
+﻿#include "config.h"
 
 #include <cctype>
 #include <cstdio>
@@ -83,6 +83,16 @@ namespace prkd::cfg
         {
             ++ln;
 
+            // 首行可能带 UTF-8 BOM —— 编辑器很容易加上，先吃掉。
+            // 不吃掉的话第一个 key 会变成 "\xEF\xBB\xBFrun.data_dir"，报未知配置项。
+            if (ln == 1 && line.size() >= 3 &&
+                static_cast<unsigned char>(line[0]) == 0xEF &&
+                static_cast<unsigned char>(line[1]) == 0xBB &&
+                static_cast<unsigned char>(line[2]) == 0xBF)
+            {
+                line.erase(0, 3);
+            }
+
             // 行尾注释：路径里出现 '#' 的情况极少，可以接受
             const auto hash = line.find('#');
             if (hash != std::string::npos) line.erase(hash);
@@ -116,7 +126,7 @@ namespace prkd::cfg
             else if (key == "loader.prefetch")   s.loader.prefetch   = parse_int(value, where);
             else if (key == "loader.short_side") s.loader.short_side = parse_int(value, where);
             else if (key == "loader.crop")       s.loader.crop       = parse_int(value, where);
-            else if (key == "loader.train")      s.loader.train      = parse_bool(value, where);
+            else if (key == "loader.train")      s.loader.is_train   = parse_bool(value, where);
 
             // ---- debug ----
             else if (key == "debug.intra")    s.debug.intra    = static_cast<int>(parse_int(value, where));
@@ -149,11 +159,11 @@ namespace prkd::cfg
         std::printf("[cfg]   workers       = %lld%s\n", (long long)s.loader.workers,
                     s.loader.workers <= 0 ? "（同步，不起线程）" : "");
         std::printf("[cfg]   batch         = %lld\n", (long long)s.loader.batch);
-        std::printf("[cfg]   prefetch      = %lld（池化未实现，当前忽略）\n", (long long)s.loader.prefetch);
+        std::printf("[cfg]   prefetch      = %lld（池深：同时几批在飞）\n", (long long)s.loader.prefetch);
         std::printf("[cfg]   short_side    = %lld\n", (long long)s.loader.short_side);
         std::printf("[cfg]   crop          = %lld\n", (long long)s.loader.crop);
-        std::printf("[cfg]   train         = %s%s\n", s.loader.train ? "true" : "false",
-                    s.loader.train ? "（洗牌 + drop_last）" : "（不洗牌，末批可短）");
+        std::printf("[cfg]   train         = %s%s\n", s.loader.is_train ? "true" : "false",
+                    s.loader.is_train ? "（洗牌 + drop_last）" : "（不洗牌，末批可短）");
 
         std::printf("[cfg] ---------- debug：诊断 ----------\n");
         std::printf("[cfg]   intra         = %d\n", s.debug.intra);
