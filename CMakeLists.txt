@@ -14,10 +14,10 @@ endif()
 # ---------------- libtorch ----------------
 if(WIN32)
     set(LIBTORCH_ROOT "D:/DATA/C++_lib/libtorch_cu126")
+    # WIN这里不写CUDA是因为环境变量CUDA_PATH已经指向了CUDA安装目录，CMake会自动找到CUDA。
 else()
     set(LIBTORCH_ROOT "/home/chenzhijiang/userFile/C++_lib/libtorch")
-    set(CUDA_TOOLKIT_ROOT_DIR "/home/chenzhijiang/userFile/miniConda3/envs/cuda126/targets/x86_64-linux")
-    set(CMAKE_CUDA_FLAGS "-I${CUDA_TOOLKIT_ROOT_DIR}/include" CACHE STRING "CUDA flags")
+    set(CUDA_TOOLKIT_ROOT_DIR "/home/chenzhijiang/userFile/cuda_126")
 endif()
 
 list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_ROOT}")

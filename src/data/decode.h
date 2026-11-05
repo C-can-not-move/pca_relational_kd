@@ -19,6 +19,7 @@
 
 namespace prkd::data
 {
+    //Bitmap 跟 libjpeg / PIL 用(w, h)；张量跟 torch 用(h, w)
     struct Bitmap
     {
         int w = 0;
