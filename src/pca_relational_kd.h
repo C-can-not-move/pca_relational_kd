@@ -9,6 +9,12 @@
 #include "data/imagenet_loader.h"
 #include "data/transform.h"
 
+#include "model/resnet.h"
+#include "model/checkpoint.h"
+
+#include "test_unit/loader_check.h"
+#include "test_unit/model_check.h"
+
 #include <cstdio>      // std::fprintf
 #include <exception>   // std::exception
 

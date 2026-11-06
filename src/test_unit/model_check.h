@@ -8,6 +8,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 
 #include "model/resnet.h"
 
@@ -41,6 +42,15 @@ namespace prkd::test_unit
         model::ResNet net,
         int64_t batch,
         int64_t num_classes);
+
+    // 加载预训练权重，打印四个指纹。
+    //
+    // load_checkpoint 只保证「搬了 N 个张量」，不保证「搬对了值」。
+    // 偏移算错但不越界时，键名/形状/字节数的检查全过，值却是错的 —— 只有指纹能抓住。
+    // 但它抓不住「自己该是多少」，所以这里只打印，期望值写在实现文件的注释里，人工对。
+    void check_pretrained(
+        model::ResNet net,
+        const std::string& base);                // 不带扩展名，如 "run/resnet152_1000"
 
     // 把上面两项都跑一遍，打印每步结果。
     void run_model_checks();

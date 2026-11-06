@@ -1,10 +1,8 @@
-﻿// src/pca_relational_kd.cpp —— 当前阶段：模型检查入口。
+﻿// src/pca_relational_kd.cpp —— 当前阶段：模型与权重检查的入口。
 //
-// 数据管线的冒烟测试保留在 #if 0 里，切回去时删掉 return 0 并取消注释。
+// 顺序：结构（前向/反向/参数量）→ 权重（加载 + 指纹）。
+// 数据管线的冒烟测试留在 #if 0 里，切回去时删掉 return 0 并放开注释。
 #include "pca_relational_kd.h"
-
-#include "test_unit/loader_check.h"
-#include "test_unit/model_check.h"
 
 int main(int argc, char** argv)
 {
@@ -13,25 +11,44 @@ int main(int argc, char** argv)
 #endif
     try
     {
-        // ====================================================================
-        // 模型检查：前向形状 / 参数量 / 反向梯度
-        // ====================================================================
+        // ---- 配置 ----
+        prkd::cfg::Settings st = prkd::cfg::defaults();
+
+        const std::string cfg_path = (argc > 1) ? argv[1] : "prkd.ini";
+        prkd::cfg::load_file(cfg_path, st);      // 打不开 / 内容有错 → 直接抛
+
+        std::printf("\n[cfg] 配置文件 = %s\n", cfg_path.c_str());
+        prkd::cfg::print(st);
+
+        // 进程级全局量，必须在起任何线程之前设。
+        torch::set_num_threads(st.debug.intra);
+
+        // ---- 结构：「这个网络是不是对的」 ----
         prkd::test_unit::run_model_checks();
+
+        // ---- 权重：「搬进来的值是不是对的」 ----
+        //
+        // 四个位置各验一件事：
+        //   conv1.weight          文件开头的偏移
+        //   bn1.running_mean      buffer 有没有被正确搬运（只存参数的经典错误）
+        //   layer4.2.conv3.weight 中间偏移累积
+        //   fc.bias               文件末尾的位置
+        //
+        // 期望值来自 tool/export_teacher_flat.py 导出时的输出。
+        {
+            auto net = prkd::model::h_resnet152(1000);
+
+            std::printf("\n===== 预训练权重 =====\n");
+            prkd::test_unit::check_pretrained(net, "D:/DATA/CODE/C++/pca_relational_kd/run/resnet152_1000");
+        }
 
         std::printf("\nOK\n");
         return 0;
 
         // ====================================================================
-        // 数据管线的冒烟测试，暂时不跑。恢复时删掉上面的 return 0 并放开这里。
+        // 数据管线的冒烟测试，暂时不跑。
         // ====================================================================
 #if 0
-        prkd::cfg::Settings st = prkd::cfg::defaults();
-
-        const std::string cfg_path = (argc > 1) ? argv[1] : "prkd.ini";
-        prkd::cfg::load_file(cfg_path, st);
-
-        std::printf("\n[cfg] 配置文件 = %s\n", cfg_path.c_str());
-        prkd::cfg::print(st);
 
         if (st.run.data_dir.empty())
         {
@@ -39,15 +56,13 @@ int main(int argc, char** argv)
                 "没有指定 data_dir —— 写进 prkd.ini 的 run.data_dir");
         }
 
-        torch::set_num_threads(st.debug.intra);
-
         prkd::data::LoaderOpts opt;
         opt.batch_size = st.loader.batch;
-        opt.workers    = st.loader.workers;
+        opt.workers = st.loader.workers;
         opt.prefetch_depth = st.loader.prefetch;
         opt.short_side = st.loader.short_side;
-        opt.crop       = st.loader.crop;
-        opt.is_train   = st.loader.is_train;
+        opt.crop = st.loader.crop;
+        opt.is_train = st.loader.is_train;
 
         const std::string data_dir =
             st.run.data_dir + (st.loader.is_train ? "/train" : "/val");
