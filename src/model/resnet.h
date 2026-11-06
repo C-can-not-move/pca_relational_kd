@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace pca_rkd::model
+namespace prkd::model
 {
     // ------------------------------------------------------------------------
     // BasicBlock —— torchvision BasicBlock，expansion == 1
@@ -128,4 +128,4 @@ namespace pca_rkd::model
     ResNet h_resnet101(int64_t num_classes = 1000);
     ResNet h_resnet152(int64_t num_classes = 1000);
 
-}  // namespace pca_rkd::model
+}  // namespace prkd::model

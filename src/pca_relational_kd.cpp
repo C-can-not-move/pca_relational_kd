@@ -1,10 +1,10 @@
-﻿// src/pca_relational_kd.cpp —— 数据管线冒烟测试的入口。
+﻿// src/pca_relational_kd.cpp —— 当前阶段：模型检查入口。
 //
-// 唯一的命令行参数是【配置文件路径】，其余全部来自 prkd.ini。
-// 断言都在 test_unit/loader_check.*，这里只负责：读配置 → 组装 loader → 跑一轮。
+// 数据管线的冒烟测试保留在 #if 0 里，切回去时删掉 return 0 并取消注释。
 #include "pca_relational_kd.h"
 
 #include "test_unit/loader_check.h"
+#include "test_unit/model_check.h"
 
 int main(int argc, char** argv)
 {
@@ -13,11 +13,22 @@ int main(int argc, char** argv)
 #endif
     try
     {
-        // ---- 配置 ----
+        // ====================================================================
+        // 模型检查：前向形状 / 参数量 / 反向梯度
+        // ====================================================================
+        prkd::test_unit::run_model_checks();
+
+        std::printf("\nOK\n");
+        return 0;
+
+        // ====================================================================
+        // 数据管线的冒烟测试，暂时不跑。恢复时删掉上面的 return 0 并放开这里。
+        // ====================================================================
+#if 0
         prkd::cfg::Settings st = prkd::cfg::defaults();
 
         const std::string cfg_path = (argc > 1) ? argv[1] : "prkd.ini";
-        prkd::cfg::load_file(cfg_path, st);      // 打不开 / 内容有错 → 直接抛
+        prkd::cfg::load_file(cfg_path, st);
 
         std::printf("\n[cfg] 配置文件 = %s\n", cfg_path.c_str());
         prkd::cfg::print(st);
@@ -28,10 +39,8 @@ int main(int argc, char** argv)
                 "没有指定 data_dir —— 写进 prkd.ini 的 run.data_dir");
         }
 
-        // 进程级全局量，必须在起任何线程之前设。
         torch::set_num_threads(st.debug.intra);
 
-        // ---- 组装 ----
         prkd::data::LoaderOpts opt;
         opt.batch_size = st.loader.batch;
         opt.workers    = st.loader.workers;
@@ -46,7 +55,6 @@ int main(int argc, char** argv)
 
         std::printf("\n===== %s =====\n", data_dir.c_str());
 
-        // ② 对拍自己建两套 loader，放在最前面 —— 不和下面的实例共用
         if (st.debug.selftest && opt.workers > 0)
         {
             prkd::test_unit::check_workers_equivalence(data_dir, opt, seed, /*n_batches=*/3);
@@ -54,16 +62,10 @@ int main(int argc, char** argv)
 
         prkd::data::ImageNetLoader ld(data_dir, opt, seed);
 
-        // ① 索引规模
         prkd::test_unit::check_index(ld);
-
-        // ③ 跑满一个 epoch（内部每批 check_batch、前 3 批打印、最后报吞吐）
         prkd::test_unit::run_one_epoch(ld);
-
-        // ④ 解码体检
         prkd::test_unit::print_decode_health(ld.stats());
 
-        // ⑤ 坏图存档（有坏图才写；全量清单得离线扫）
         if (ld.bad_count() > 0)
         {
             const std::string bad_path = st.run.out_dir + "/bad_images.tsv";
@@ -75,6 +77,7 @@ int main(int argc, char** argv)
         std::printf("\n判据（顺序可复现）：同一条命令跑两次，上面的 indices[0..4] 必须逐位相同。\n");
         std::printf("OK\n");
         return 0;
+#endif
     }
     catch (const std::exception& e)
     {

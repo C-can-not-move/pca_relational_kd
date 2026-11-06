@@ -1,7 +1,7 @@
 ﻿// src/model/resnet.cpp
 #include "model/resnet.h"
 
-namespace pca_rkd::model
+namespace prkd::model
 {
 
     // ------------------------------------------------------------------------
@@ -215,7 +215,7 @@ namespace pca_rkd::model
         // BN 的 weight=1 / bias=0 是 PyTorch 默认，不重复写。
         // fc 保持默认（kaiming_uniform_(a=sqrt(5))），也不动。
         // --------------------------------------------------------------------
-        for (const auto& m : modules())   // std::vector<std::shared_ptr<Module>>
+        for (const auto& m : modules(/*include_self=*/false))   // std::vector<std::shared_ptr<Module>>
         {
             if (auto conv = std::dynamic_pointer_cast<torch::nn::Conv2dImpl>(m))
             {
@@ -264,4 +264,4 @@ namespace pca_rkd::model
         return ResNet(std::vector<int64_t>{ 3, 8, 36, 3 }, num_classes, /*bottleneck=*/true);
     }
 
-}  // namespace pca_rkd::model
+}  // namespace prkd::model
