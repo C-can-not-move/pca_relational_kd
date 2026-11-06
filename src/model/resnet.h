@@ -101,6 +101,8 @@ namespace prkd::model
             bool    bottleneck  = true);
 
         torch::Tensor forward(torch::Tensor x);
+        torch::Tensor forward_features(torch::Tensor x);   // (N, 2048/512)
+        torch::Tensor forward_head(torch::Tensor feat);    // (N, num_classes)
 
     private:
         bool bottleneck_;

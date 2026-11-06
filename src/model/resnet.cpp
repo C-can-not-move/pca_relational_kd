@@ -225,7 +225,10 @@ namespace prkd::model
         }
     }
 
-    torch::Tensor ResNetImpl::forward(torch::Tensor x)
+    // 特征段：stem + 四个 stage + 全局池化，输出展平后的特征向量
+    //   Bottleneck（50/101/152）→ (N, 2048)
+    //   BasicBlock（18/34）     → (N,  512)
+    torch::Tensor ResNetImpl::forward_features(torch::Tensor x)
     {
         x = maxpool->forward(relu->forward(bn1->forward(conv1->forward(x))));  // (N,   64, 56, 56)
         x = layer1->forward(x);                                                // (N,  W*1, 56, 56)
@@ -233,7 +236,20 @@ namespace prkd::model
         x = layer3->forward(x);                                                // (N,  W*4, 14, 14)
         x = layer4->forward(x);                                                // (N,  W*8,  7,  7)
         x = avgpool->forward(x);                                               // (N,  W*8,  1,  1)
-        return fc->forward(torch::flatten(x, 1));                              // (N, num_classes)
+        return torch::flatten(x, 1);                                           // (N, 特征宽度)
+    }
+
+    // 分类段：只有一层 fc，把特征映射到 logits
+    torch::Tensor ResNetImpl::forward_head(torch::Tensor feat)
+    {
+        return fc->forward(feat);                                              // (N, num_classes)
+    }
+
+    torch::Tensor ResNetImpl::forward(torch::Tensor x)
+    {
+        // 特征只算一遍。写成 forward_features(x) 和 forward_head(forward_features(x))
+        //   分两次调用会让整个卷积网络跑两遍 —— 数值一样，时间是两倍。
+        return forward_head(forward_features(x));
     }
 
     // ------------------------------------------------------------------------
