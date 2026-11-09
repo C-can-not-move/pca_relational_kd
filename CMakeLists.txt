@@ -64,6 +64,10 @@ set(APP_SOURCES
     "src/model/checkpoint.h"
     "src/model/checkpoint.cpp"
 
+    # 工具
+    "src/util/pca.h"
+    "src/util/pca.cpp"
+
     # 验收
     "src/test_unit/loader_check.h"
     "src/test_unit/loader_check.cpp"
