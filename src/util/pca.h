@@ -31,8 +31,10 @@ namespace prkd::util
 {
 	// PCA 的结果:
 	// 给出一个新的坐标系，通过数据集的均值和协方差来计算
+	// “单个维度不对应语义，组合才对应”
 	// PCA 只看二阶矩
 	// → 看不到多峰分布、类别簇、任何高阶结构
+	// “不做选择”时，PCA 只是把同一组数据换了个坐标系表示，没有压缩。
 	// PCA 的约定：
 	// ① 降序      V 第 0 列是方差最大的方向
 	// ② 配对      eigen[j] ↔ V[:, j]，两者永远同时翻转
@@ -71,4 +73,20 @@ namespace prkd::util
 		torch::Tensor s1_;        // (D,)    f64，Σ x S1 是一阶矩
 		torch::Tensor s2_;        // (D, D)  f64，Σ x xᵀ S2 是二阶矩
 	};
+
+	// 把特征换成PCA坐标
+	// feat     (N, D)  原始特征，D 必须等于 coord.V 的行数
+	// keep     <= 0 用全部列；> 0 只取前 keep 列（列已按方差降序）
+	// dtype    返回类型，默认 f32（下游损失与网络都在 f32 上算）
+	//
+	// ★ 这一步是纯线性的，两个后果要记住：
+	//     · keep <= 0 时是「正交变换 + 平移」，信息一点不丢
+	//     · 若下游用 Pearson 距离（对尺度和平移不敏感），
+	//       既不选列也不白化，这一步在数值上等价于不做
+	//     · 它的价值全在 keep（选列）和白化上
+	torch::Tensor transform(
+		const PcaResult& coord,
+		const torch::Tensor& feat,
+		int64_t keep = -1,
+		torch::ScalarType dtype = torch::kFloat32);
 }

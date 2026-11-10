@@ -61,4 +61,35 @@ namespace prkd::util
 
 	int64_t Pca::dim() const { return dim_; }
 	int64_t Pca::count() const { return n_; }
+
+	// 纯线性，两个后果：
+	//   · keep <= 0 时是正交变换 + 平移，信息不丢
+	//   · 下游若用 Pearson（对尺度/平移不敏感），既不选列也不白化就等于没做
+	torch::Tensor transform(
+		const PcaResult& coord,
+		const torch::Tensor& feat,
+		int64_t keep,
+		torch::ScalarType dtype)
+	{
+		TORCH_CHECK(feat.defined(), "transform: 传入了未定义的张量");
+		TORCH_CHECK(feat.dim() == 2, "transform: 特征必须是 (N, D)，收到 ", feat.dim(), " 维");
+		TORCH_CHECK(coord.V.defined() && coord.V.dim() == 2, "transform: coord 没算过");
+		TORCH_CHECK(coord.mu.defined() && coord.mu.dim() == 1, "transform: coord.mu 形状不对");
+
+		const int64_t d = coord.V.size(0);
+		TORCH_CHECK(feat.size(1) == d,"transform: 特征维数不符，期望 ", d, "，收到 ", feat.size(1));
+
+		// keep <= 0 用全部列；否则截前 keep 列（列已按方差降序）。
+		const int64_t cols = coord.V.size(1);
+		int64_t k = (keep > 0) ? keep : cols;
+		TORCH_CHECK(k <= cols, "transform: keep=", k, " 超过 V 的列数 ", cols);
+
+		// 与 fit 一致：内部在 CPU 上用 f64 算，避免 f32 在减法与矩阵乘上的累积误差。
+		const auto x = feat.detach().to(torch::kCPU, torch::kFloat64);
+		const auto v = coord.V.narrow(1, 0, k);
+
+		// (x − μ) 是行向量右乘 V —— 顺序写反会让维度对不上。
+		auto z = torch::matmul(x - coord.mu.unsqueeze(0), v);
+		return z.to(dtype);
+	}
 }
