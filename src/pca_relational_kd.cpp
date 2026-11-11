@@ -1,4 +1,4 @@
-﻿// src/pca_relational_kd.cpp —— 当前阶段：模型与权重检查的入口。
+// src/pca_relational_kd.cpp —— 当前阶段：模型与权重检查的入口。
 //
 // 顺序：结构（前向/反向/参数量）→ 权重（加载 + 指纹）。
 // 数据管线的冒烟测试留在 #if 0 里，切回去时删掉 return 0 并放开注释。
@@ -39,7 +39,14 @@ int main(int argc, char** argv)
             auto net = prkd::model::h_resnet152(1000);
 
             std::printf("\n===== 预训练权重 =====\n");
-            prkd::test_unit::check_pretrained(net, "D:/DATA/CODE/C++/pca_relational_kd/run/resnet152_1000");
+            if (st.run.ckpt.empty())
+            {
+                std::printf("run.ckpt 未设置，跳过权重加载\n");
+            }
+            else
+            {
+                prkd::test_unit::check_pretrained(net, st.run.ckpt);
+            }
         }
 
         std::printf("\nOK\n");
@@ -62,6 +69,13 @@ int main(int argc, char** argv)
         opt.short_side = st.loader.short_side;
         opt.crop = st.loader.crop;
         opt.is_train = st.loader.is_train;
+
+        // 三个开关各自从配置读，谁也不派生谁。
+        // ini 里要把三种模式都写全（见 prkd.ini 的注释）：
+        //   训练 train=true shuffle=true drop_last=true
+        //   评测 train=false shuffle=false drop_last=false
+        opt.shuffle   = st.loader.shuffle;
+        opt.drop_last = st.loader.drop_last;
 
         const std::string data_dir =
             st.run.data_dir + (st.loader.is_train ? "/train" : "/val");

@@ -1,4 +1,4 @@
-﻿// src/test_unit/loader_check.cpp —— 数据管线验收检查的实现。
+// src/test_unit/loader_check.cpp —— 数据管线验收检查的实现。
 #include "test_unit/loader_check.h"
 
 #include <cstdio>
@@ -24,11 +24,13 @@ namespace prkd::test_unit
         const int64_t n = ld.size();
         const int64_t bs = opt.batch_size;
 
-        // drop_last 只对 train 生效：train 整除，val 向上取整（末批可短）
-        const int64_t expect = opt.is_train ? n / bs : (n + bs - 1) / bs;
+        // num_batches 由 drop_last 决定，不再由 is_train 推。
+        // （is_train 现在只表示"用哪套变换"，与洗牌/截尾解耦了。）
+        const int64_t expect = opt.drop_last ? n / bs : (n + bs - 1) / bs;
 
-        std::printf("模式        : %s\n",
-            opt.is_train ? "train（洗牌，drop_last）" : "val（不洗牌，末批可短）");
+        std::printf("模式        : transform=%s  shuffle=%d  drop_last=%d\n",
+            opt.is_train ? "train(增强)" : "eval(中心裁剪)",
+            (int)opt.shuffle, (int)opt.drop_last);
         std::printf("类数        : %lld\n", (long long)ld.num_classes());
         std::printf("样本数      : %lld\n", (long long)n);
         std::printf("batch_size  : %lld\n", (long long)bs);
@@ -47,9 +49,9 @@ namespace prkd::test_unit
         {
             throw std::runtime_error("索引检查: num_batches 与期望不符");
         }
-        if (opt.is_train && n < bs)
+        if (opt.drop_last && n < bs)
         {
-            throw std::runtime_error("索引检查: 训练模式下 drop_last 会得到 0 个 batch");
+            throw std::runtime_error("索引检查: drop_last=true 但样本数 < batch_size，会得到 0 个 batch");
         }
     }
 

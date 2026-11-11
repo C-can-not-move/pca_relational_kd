@@ -13,6 +13,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cstdio>
 #include <numeric>
 #include <random>
 
@@ -111,6 +112,22 @@ namespace prkd::data
         }
 
         start_epoch(0);
+
+        // 生效值一行。
+        // shuffle / drop_last 与 transform 分支已经解耦，能配出"合法但反直觉"的组合
+        // （比如评测却 drop_last=true，白丢末尾不到一批的样本）。
+        // 不拦，只让它出现在启动输出里 —— 事后猜比启动时看一眼贵得多。
+        std::printf("[loader] batch=%lld out=%lldx%lld workers=%lld "
+                    "shuffle=%d drop_last=%d | samples=%lld classes=%lld batches=%lld\n",
+                    (long long)opt_.batch_size,
+                    (long long)opt_.out_h, (long long)opt_.out_w,
+                    (long long)opt_.workers,
+                    static_cast<int>(opt_.shuffle), static_cast<int>(opt_.drop_last),
+                    (long long)paths_.size(),
+                    (long long)classes_.size(),
+                    (long long)(batch_pos_.size() - 1));
+        std::fflush(stdout);
+
         // worker 线程常驻：起一次，析构时停。每批靠任务队列 + remaining 计数，不用 barrier。
         start_workers();
     }

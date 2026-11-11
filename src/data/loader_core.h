@@ -106,6 +106,40 @@ namespace prkd::data
     };
 
     // ------------------------------------------------------------------------
+    // LoaderCommonOpts —— 调用方契约的共用基底（不是机器的一部分）
+    //
+    // 机器只认 CoreOpts。这个结构体放在这里，只为了让 core() 与 CoreOpts 的定义
+    // 同处一处 —— CoreOpts 加字段时，这里必须跟着改，而编译期不会替你发现
+    // （聚合初始化，字段顺序错了照样能编过）。
+    //
+    // 两个数据集共用：ImageNet 加 short_side / is_train，ALOI 加视角范围。
+    // ------------------------------------------------------------------------
+    struct LoaderCommonOpts
+    {
+        int64_t batch_size     = 64;
+        int64_t workers        = 0;
+        int64_t prefetch_depth = 2;
+        int64_t crop           = 224;
+
+        bool shuffle   = true;      // 与训练/评测解耦：显式填，不靠 is_train 派生
+        bool drop_last = true;
+
+        // 唯一的映射点。校验放在这里：它在基类构造前求值，
+        // 所以"crop <= 0"会在被当成 out_h 用之前就被拦住。
+        CoreOpts core() const
+        {
+            TORCH_CHECK(batch_size > 0, "loader: batch_size 必须 > 0");
+            TORCH_CHECK(crop > 0, "loader: crop 必须 > 0");
+            if (workers < 0)
+            {
+                throw std::runtime_error("loader: workers 不能为负");
+            }
+            return CoreOpts{ batch_size, workers, prefetch_depth,
+                             crop, crop, shuffle, drop_last };
+        }
+    };
+
+    // ------------------------------------------------------------------------
     // ImageBatch —— 一次交付的东西
     //
     // 张量是池槽里预分配的那个，交付时整体 move 出去；槽立刻还池。
@@ -198,7 +232,10 @@ namespace prkd::data
         const std::vector<BadImage>& bad_images() const { return bad_; }
         int64_t bad_count() const { return bad_count_; }
 
-        const CoreOpts& options() const { return opt_; }
+        // 机器实际生效的那份参数。改名 core_options() 是为了不与
+        // ImageNetLoader::options()（返回 LoaderOpts）同名 —— 同名不同返回类型
+        // 会让基类那个永远摸不到，而且不报错。
+        const CoreOpts& core_options() const { return opt_; }
 
     private:
         struct PoolSlot

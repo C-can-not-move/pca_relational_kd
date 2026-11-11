@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <cstdint>
 #include <string>
@@ -17,8 +17,10 @@ namespace prkd::cfg
 
     struct RunConfig
     {
-        std::string data_dir;              // 数据集【某个 split 的父目录】；main 会拼 /train 或 /val
+        std::string data_dir;              // 数据集根；ImageNet 会在其下拼 /train 或 /val
         std::string out_dir = "./run";     // checkpoint 等落在这里
+        std::string ckpt;                  // 要加载的权重前缀，如 .../run/resnet152_1000；空 = 不加载
+        std::string dataset = "imagenet";  // imagenet | aloi（决定用哪个 loader）
         int         device_index = 0;      // 用哪块卡；-1 = 强制 CPU
         int64_t     seed = 2026;
     };
@@ -30,7 +32,16 @@ namespace prkd::cfg
         int64_t prefetch   = 4;      // 预取池深度：1 = 退化成同步等齐
         int64_t short_side = 256;    // val 的 Resize 短边；V1 权重 256，V2 用 232
         int64_t crop       = 224;
-        bool    is_train   = true;
+
+        // 三个开关互相独立，谁也不派生谁。
+        //   is_train     只决定变换分支（增强 / 中心裁剪）
+        //   shuffle      每 epoch 是否重排
+        //   drop_last    是否截尾使批整除
+        // 所以评测时必须把三个一起改成 false —— 只改 is_train 会得到
+        // "中心裁剪但洗牌且丢尾巴"这种合法又反直觉的组合。启动打印里能看见。
+        bool is_train  = true;
+        bool shuffle   = true;
+        bool drop_last = true;
     };
 
     struct DebugSettings

@@ -1,4 +1,4 @@
-﻿#include "config.h"
+#include "config.h"
 
 #include <cctype>
 #include <cstdio>
@@ -116,6 +116,8 @@ namespace prkd::cfg
             // ---- run ----
             if      (key == "run.data_dir")     s.run.data_dir = value;
             else if (key == "run.out_dir")      s.run.out_dir = value;
+            else if (key == "run.ckpt")         s.run.ckpt = value;
+            else if (key == "run.dataset")      s.run.dataset = value;
             else if (key == "run.device_index") s.run.device_index =
                                                     static_cast<int>(parse_int(value, where));
             else if (key == "run.seed")         s.run.seed = parse_int(value, where);
@@ -127,6 +129,8 @@ namespace prkd::cfg
             else if (key == "loader.short_side") s.loader.short_side = parse_int(value, where);
             else if (key == "loader.crop")       s.loader.crop       = parse_int(value, where);
             else if (key == "loader.train")      s.loader.is_train   = parse_bool(value, where);
+            else if (key == "loader.shuffle")    s.loader.shuffle    = parse_bool(value, where);
+            else if (key == "loader.drop_last")  s.loader.drop_last  = parse_bool(value, where);
 
             // ---- debug ----
             else if (key == "debug.intra")    s.debug.intra    = static_cast<int>(parse_int(value, where));
@@ -143,14 +147,21 @@ namespace prkd::cfg
         if (s.loader.short_side <= 0) throw std::runtime_error(path + ": loader.short_side 必须 > 0");
         if (s.loader.crop       <= 0) throw std::runtime_error(path + ": loader.crop 必须 > 0");
         if (s.debug.intra       <  1) throw std::runtime_error(path + ": debug.intra 必须 >= 1");
+        if (s.run.dataset != "imagenet" && s.run.dataset != "aloi")
+        {
+            throw std::runtime_error(path + ": run.dataset 只能是 imagenet 或 aloi，收到 \""
+                                     + s.run.dataset + "\"");
+        }
 
     }
 
     void print(const Settings& s)
     {
         std::printf("[cfg] ---------- run：在哪训 ----------\n");
+        std::printf("[cfg]   dataset       = %s\n", s.run.dataset.c_str());
         std::printf("[cfg]   data_dir      = %s\n", s.run.data_dir.empty() ? "(未设置)" : s.run.data_dir.c_str());
         std::printf("[cfg]   out_dir       = %s\n", s.run.out_dir.c_str());
+        std::printf("[cfg]   ckpt          = %s\n", s.run.ckpt.empty() ? "(不加载)" : s.run.ckpt.c_str());
         std::printf("[cfg]   device_index  = %d%s\n", s.run.device_index,
                     s.run.device_index < 0 ? "（强制 CPU）" : "");
         std::printf("[cfg]   seed          = %lld\n", (long long)s.run.seed);
@@ -162,8 +173,15 @@ namespace prkd::cfg
         std::printf("[cfg]   prefetch      = %lld（池深：同时几批在飞）\n", (long long)s.loader.prefetch);
         std::printf("[cfg]   short_side    = %lld\n", (long long)s.loader.short_side);
         std::printf("[cfg]   crop          = %lld\n", (long long)s.loader.crop);
-        std::printf("[cfg]   train         = %s%s\n", s.loader.is_train ? "true" : "false",
-                    s.loader.is_train ? "（洗牌 + drop_last）" : "（不洗牌，末批可短）");
+
+        // 三个开关并列打印：它们互相独立，配出"中心裁剪 + 洗牌 + 丢尾巴"是合法的，
+        // 但那多半不是本意 —— 所以让它一眼可见，而不是靠代码拦。
+        std::printf("[cfg]   train         = %s（变换：%s）\n",
+                    s.loader.is_train ? "true" : "false",
+                    s.loader.is_train ? "增强" : "中心裁剪");
+        std::printf("[cfg]   shuffle       = %s\n", s.loader.shuffle ? "true" : "false");
+        std::printf("[cfg]   drop_last     = %s%s\n", s.loader.drop_last ? "true" : "false",
+                    s.loader.drop_last ? "" : "（末批可短）");
 
         std::printf("[cfg] ---------- debug：诊断 ----------\n");
         std::printf("[cfg]   intra         = %d\n", s.debug.intra);

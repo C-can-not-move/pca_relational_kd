@@ -21,34 +21,6 @@ namespace prkd::data
 {
     namespace
     {
-        // LoaderOpts → CoreOpts。
-        //
-        // 校验放在这里而不是派生类构造函数体里：to_core() 在基类构造【之前】求值，
-        // 于是"crop <= 0"会在基类拿它当 out_h 之前就被拦住，报错信息也更准。
-        //
-        // 唯一有语义的映射：is_train 同时决定"洗牌"和"丢尾巴"——
-        // 这两件事在 ImageNet 上历来绑定，分开了反而容易配错。
-        CoreOpts to_core(const LoaderOpts& o)
-        {
-            TORCH_CHECK(o.batch_size > 0, "ImageNetLoader: batch_size 必须 > 0");
-            TORCH_CHECK(o.crop > 0, "ImageNetLoader: crop 必须 > 0");
-            TORCH_CHECK(o.short_side > 0, "ImageNetLoader: short_side 必须 > 0");
-            if (o.workers < 0)
-            {
-                throw std::runtime_error("ImageNetLoader: workers 不能为负");
-            }
-
-            CoreOpts c;
-            c.batch_size     = o.batch_size;
-            c.workers        = o.workers;
-            c.prefetch_depth = o.prefetch_depth;
-            c.out_h          = o.crop;
-            c.out_w          = o.crop;
-            c.shuffle        = o.is_train;
-            c.drop_last      = o.is_train;
-            return c;
-        }
-
         // --------------------------------------------------------------------
         // ImageNetSource —— 一阶目录 + 一类一个子目录
         // --------------------------------------------------------------------
@@ -202,11 +174,13 @@ namespace prkd::data
     }  // namespace
 
     ImageNetLoader::ImageNetLoader(fs::path root, const LoaderOpts& opt, uint64_t seed)
-        : LoaderCore(to_core(opt), seed,
+        : LoaderCore(opt.core(), seed,
                      std::make_unique<ImageNetSource>(std::move(root), opt, seed))
         , opt_(opt)
     {
-        // 校验已在 to_core() 里做过（那时还没拿 crop 当 out_h 用）。
+        // batch_size / crop / workers 的校验在 LoaderCommonOpts::core() 里做完了
+        // （那时还没拿 crop 当 out_h 用）。short_side 只有评测分支会读，在这里补。
+        TORCH_CHECK(opt_.short_side > 0, "ImageNetLoader: short_side 必须 > 0");
     }
 
     ImageNetLoader::~ImageNetLoader() = default;

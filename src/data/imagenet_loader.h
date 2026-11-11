@@ -22,24 +22,17 @@
 namespace prkd::data
 {
     // ------------------------------------------------------------------------
-    // LoaderOpts —— 这一次装载怎么读
+    // LoaderOpts —— ImageNet 的这一次装载怎么读
     //
-    // 前四项直接映射到 CoreOpts；后三项只影响 ImageNetSource 内部的变换分支。
+    // 共用部分（batch/workers/prefetch/crop/shuffle/drop_last）从 LoaderCommonOpts 继承，
+    // core() 也只在那边写一次。这里只加 ImageNet 特有的两项：
+    //   short_side  评测时 Resize 的短边
+    //   is_train    只决定变换分支（增强 vs 中心裁剪），不再绑 shuffle/drop_last
     // ------------------------------------------------------------------------
-    struct LoaderOpts
+    struct LoaderOpts : LoaderCommonOpts
     {
-        int64_t batch_size = 64;
-        int64_t workers = 0;        // 0 = 同步单线程；>0 = 起这么多个读图线程
-        int64_t prefetch_depth = 2; // 池深：同时几个批在飞。1 = 退化成同步等齐
-
         int64_t short_side = 256;   // Resize(短边) —— 只对 is_train=false 生效
-        int64_t crop = 224;         // CenterCrop / RRC 的输出边长（也是 out_h/out_w）
-
-        /*
-        true  = RandomResizedCrop(crop) + RandomHorizontalFlip，且每 epoch 洗牌、drop_last
-        false = Resize 短边 short_side + CenterCrop(crop)，且不洗牌（顺序固定）、不丢尾巴
-        */
-        bool is_train = true;
+        bool    is_train   = true;  // true = RRC + flip；false = resize + center_crop
     };
 
     // ------------------------------------------------------------------------
