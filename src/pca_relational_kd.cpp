@@ -43,12 +43,11 @@ int main(int argc, char** argv)
         }
 
         std::printf("\nOK\n");
-        return 0;
+        // return 0
 
         // ====================================================================
         // 数据管线的冒烟测试，暂时不跑。
         // ====================================================================
-#if 0
 
         if (st.run.data_dir.empty())
         {
@@ -92,7 +91,6 @@ int main(int argc, char** argv)
         std::printf("\n判据（顺序可复现）：同一条命令跑两次，上面的 indices[0..4] 必须逐位相同。\n");
         std::printf("OK\n");
         return 0;
-#endif
     }
     catch (const std::exception& e)
     {

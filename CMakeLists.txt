@@ -61,6 +61,8 @@ set(APP_SOURCES
     "src/config.cpp"
 
     # 数据层
+    "src/data/loader_core.h"
+    "src/data/loader_core.cpp"
     "src/data/imagenet_loader.h"
     "src/data/imagenet_loader.cpp"
     "src/data/transform.h"
