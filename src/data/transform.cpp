@@ -46,7 +46,11 @@ namespace prkd::data
         }
 
         // (C,H,W) -> (C,th,tw)，bilinear + antialias
-        torch::Tensor bilinear(const torch::Tensor& chw, int64_t th, int64_t tw)
+        //
+        // 名字带 interp_ 前缀：不能叫 bilinear —— ATen 里有个同名的 at::native::bilinear
+        // （四张量参数的上采样算子），编辑器的跳转会被重载集干扰。
+        // 以后加双三次就叫 interp_bicubic，不会与任何库符号撞。
+        torch::Tensor interp_bilinear(const torch::Tensor& chw, int64_t th, int64_t tw)
         {
             return torch::nn::functional::interpolate(
                 chw.unsqueeze(0),
@@ -163,7 +167,23 @@ namespace prkd::data
         TORCH_CHECK(short_side > 0, "resize: short_side 必须 > 0");
 
         const auto nhw = resized_hw(chw.size(-2), chw.size(-1), short_side);
-        return bilinear(chw, nhw.first, nhw.second);
+        return interp_bilinear(chw, nhw.first, nhw.second);
+    }
+
+    // 直接拉伸到目标尺寸，不保持长宽比。
+    //
+    // 与 resize 的区别：resize 管的是"短边多长"，长边跟着比例走；这里两个边都由调用方定死。
+    // 用在 ALOI：384×288（4:3）→ 224×224，横向被压掉约 25%。
+    //
+    // 形变是可以接受的，因为所有样本受同一个变换 —— PCA 看的是样本间的协方差，
+    // 统一的线性映射只改变主轴方向，不改变"哪些轴是类间的、哪些是视角的"这个判断。
+    // ★ 不能只对一部分样本做不同处理：一致性比保真更重要。
+    torch::Tensor resize_to(const torch::Tensor& chw, int64_t out_h, int64_t out_w)
+    {
+        check_chw(chw, "resize_to");
+        TORCH_CHECK(out_h > 0 && out_w > 0,"resize_to: 目标尺寸非法 ", out_h, "x", out_w);
+
+        return interp_bilinear(chw, out_h, out_w);
     }
 
     torch::Tensor center_crop(const torch::Tensor& chw, int64_t out_h, int64_t out_w)
@@ -190,7 +210,7 @@ namespace prkd::data
 
         const auto box = random_crop_box(chw.size(-2), chw.size(-1), rng);
         const auto cropped = chw.narrow(-2, box.i, box.h).narrow(-1, box.j, box.w);
-        return bilinear(cropped, out_size, out_size);
+        return interp_bilinear(cropped, out_size, out_size);
     }
 
     torch::Tensor random_horizontal_flip(const torch::Tensor& chw, std::mt19937_64& rng,

@@ -47,6 +47,14 @@ namespace prkd::data
     // Resize(short_side)：短边对齐，长边按 int() 截断
     torch::Tensor resize(const torch::Tensor& chw, int64_t short_side);
 
+    // Resize to (out_h, out_w)：直接拉伸到目标尺寸，不保持长宽比。
+    //
+    // 与 resize 的区别：resize 只定短边、长边跟着比例走；这里两边都定死。
+    // 用在 ALOI（384×288 → 224×224），横向压掉约 25%。
+    // 形变可接受：所有样本同一个变换，PCA 的主轴判断不受影响；
+    // 真正要避免的是"只对一部分样本做不同处理"。
+    torch::Tensor resize_to(const torch::Tensor& chw, int64_t out_h, int64_t out_w);
+
     // CenterCrop(out_h, out_w)：纯切片，偏移用银行家舍入
     torch::Tensor center_crop(const torch::Tensor& chw, int64_t out_h, int64_t out_w);
 

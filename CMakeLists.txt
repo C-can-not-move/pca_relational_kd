@@ -41,6 +41,16 @@ find_package(Threads REQUIRED)
 message(STATUS "JPEG include: ${JPEG_INCLUDE_DIR}")
 message(STATUS "JPEG library: ${JPEG_LIBRARY}")
 
+# ---------------- vendor: fpng ----------------
+# PNG 解码。只支持 8 位 RGB/RGBA、不隔行 —— 正是 ALOI 的格式。
+# 单独成静态库：它的警告与你的代码隔离，且 fpng.cpp 不变就不重编。
+add_library(fpng STATIC "src/vendor/fpng/fpng.cpp")
+target_include_directories(fpng PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/fpng")
+if(MSVC)
+  target_compile_options(fpng PRIVATE /W0)   # 第三方代码不参与你的警告标准
+endif()
+set_target_properties(fpng PROPERTIES FOLDER "vendor")
+
 # ---------------- 源文件 ----------------
 # 手写清单。CMake 不扫目录 —— 新加文件必须在这里补一行，否则不会进编译。
 set(APP_SOURCES
@@ -84,7 +94,7 @@ add_executable(pca_relational_kd ${APP_SOURCES})
 
 # ---------------- 头文件路径与链接 ----------------
 target_include_directories(pca_relational_kd PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(pca_relational_kd PRIVATE torch JPEG::JPEG Threads::Threads)
+target_link_libraries(pca_relational_kd PRIVATE torch JPEG::JPEG fpng Threads::Threads)
 
 # ---------------- 编译器选项（仅 MSVC）----------------
 if(MSVC)
