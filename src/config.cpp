@@ -139,6 +139,7 @@ namespace prkd::cfg
             // ---- debug ----
             else if (key == "debug.intra")    s.debug.intra    = static_cast<int>(parse_int(value, where));
             else if (key == "debug.selftest") s.debug.selftest = parse_bool(value, where);
+            else if (key == "debug.log_every") s.debug.log_every = parse_int(value, where);
 
             // ★ 未知 key 一律报错。拼错的 "worker = 8" 静默失效是最坑的一种。
             else throw std::runtime_error(where + ": 未知配置项 \"" + key + "\"");
@@ -151,6 +152,7 @@ namespace prkd::cfg
         if (s.loader.short_side <= 0) throw std::runtime_error(path + ": loader.short_side 必须 > 0");
         if (s.loader.crop       <= 0) throw std::runtime_error(path + ": loader.crop 必须 > 0");
         if (s.debug.intra       <  1) throw std::runtime_error(path + ": debug.intra 必须 >= 1");
+        if (s.debug.log_every   <  0) throw std::runtime_error(path + ": debug.log_every 不能为负（0 = 不打印进度）");
         if (s.run.dataset != "imagenet" && s.run.dataset != "aloi")
         {
             throw std::runtime_error(path + ": run.dataset 只能是 imagenet 或 aloi，收到 \""
@@ -206,5 +208,7 @@ namespace prkd::cfg
         std::printf("[cfg] ---------- debug：诊断 ----------\n");
         std::printf("[cfg]   intra         = %d\n", s.debug.intra);
         std::printf("[cfg]   selftest      = %s\n", s.debug.selftest ? "true" : "false");
+        std::printf("[cfg]   log_every     = %lld%s\n", (long long)s.debug.log_every,
+                    s.debug.log_every == 0 ? "（不打印进度）" : " 批");
     }
 }  // namespace prkd::cfg
