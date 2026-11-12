@@ -1,4 +1,4 @@
-﻿// src/data/decode.h —— 内存字节 → HWC RGB8 像素。一个函数，不管文件从哪来。
+// src/data/decode.h —— 内存字节 → HWC RGB8 像素。一个函数，不管文件从哪来。
 //
 // 为什么是 HWC：JPEG 解码出来天然就是交错排布（一个像素的 RGB 相邻），
 // 而 PIL/numpy 那边也是 (H,W,3)。到 CHW 的转换在 transform.h 的 to_chw01 里做，
@@ -32,8 +32,11 @@ namespace prkd::data
         bool decode_complete = true;    // output_scanline 是否走到 output_height
     };
 
-    // 任意 JPEG 字节流 → RGB8。
-    //  灰度图会被复制成三通道（等价 PIL 的 convert('RGB')）
+    // 任意 JPEG / PNG 字节流 → RGB8。按文件头前 8 字节分流：
+    //   FF D8 ...        → libjpeg-turbo（灰度复制成三通道，CMYK/YCCK 走 Adobe 反转）
+    //   89 50 4E 47 ...  → fpng（只支持 8 位 RGB/RGBA、不隔行）
+    //
+    // 灰度图会被复制成三通道（等价 PIL 的 convert('RGB'))
     //  CMYK / YCCK 走 Adobe 反转公式，结果可能与 Pillow 差几个灰阶
     //  渐进式 JPEG 原生支持
     //

@@ -1,6 +1,8 @@
 // src/test_unit/loader_check.cpp —— 数据管线验收检查的实现。
 #include "test_unit/loader_check.h"
 
+#include "data/aloi_loader.h"       // 对拍要能构造 ALOI loader
+
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
@@ -17,20 +19,20 @@ namespace prkd::test_unit
         }
     }  // namespace
 
-    void check_index(const data::ImageNetLoader& ld)
+    void check_index(const data::LoaderCore& ld)
     {
-        // 不收 LoaderOpts：问 loader 要，保证验证的是它【实际在用】的那套。
-        const data::LoaderOpts& opt = ld.options();
+        // 不收 opts：问 loader 要，保证验证的是它【实际在用】的那套。
+        // 问的是 core_options()（机器层），不是派生类那份 —— 检查关心的是机器拿到了什么。
+        const data::CoreOpts& opt = ld.core_options();
         const int64_t n = ld.size();
         const int64_t bs = opt.batch_size;
 
-        // num_batches 由 drop_last 决定，不再由 is_train 推。
-        // （is_train 现在只表示"用哪套变换"，与洗牌/截尾解耦了。）
+        // num_batches 由 drop_last 决定，不由 is_train 推。
         const int64_t expect = opt.drop_last ? n / bs : (n + bs - 1) / bs;
 
-        std::printf("模式        : transform=%s  shuffle=%d  drop_last=%d\n",
-            opt.is_train ? "train(增强)" : "eval(中心裁剪)",
-            (int)opt.shuffle, (int)opt.drop_last);
+        std::printf("shuffle=%d  drop_last=%d  out=%lldx%lld  workers=%lld\n",
+            (int)opt.shuffle, (int)opt.drop_last,
+            (long long)opt.out_h, (long long)opt.out_w, (long long)opt.workers);
         std::printf("类数        : %lld\n", (long long)ld.num_classes());
         std::printf("样本数      : %lld\n", (long long)n);
         std::printf("batch_size  : %lld\n", (long long)bs);
@@ -55,9 +57,9 @@ namespace prkd::test_unit
         }
     }
 
-    void check_batch(const data::ImageBatch& b, const data::ImageNetLoader& ld, int64_t k)
+    void check_batch(const data::ImageBatch& b, const data::LoaderCore& ld, int64_t k)
     {
-        const int64_t crop = ld.options().crop;
+        const int64_t crop = ld.core_options().out_h;
         const int64_t n_classes = ld.num_classes();
         const int64_t n = b.images.size(0);
 
@@ -100,6 +102,38 @@ namespace prkd::test_unit
         }
     }
 
+    namespace
+    {
+        // 两个实例逐批对拍。只依赖基类 —— ImageNet 与 ALOI 走同一份比较逻辑。
+        void compare_batches(data::LoaderCore& a, data::LoaderCore& b, int64_t n_batches)
+        {
+            a.start_epoch(0);
+            b.start_epoch(0);
+
+            for (int64_t k = 0; k < n_batches; ++k)
+            {
+                const auto x = a.next();
+                const auto y = b.next();
+
+                const bool idx_ok = (x.indices == y.indices);
+                const bool lab_ok = torch::equal(x.labels, y.labels);
+                const bool img_ok = torch::equal(x.images, y.images);
+
+                std::printf("  [对拍] batch %lld  indices %s  labels %s  images %s\n",
+                    (long long)k,
+                    idx_ok ? "OK" : "✗", lab_ok ? "OK" : "✗", img_ok ? "OK" : "✗");
+
+                if (!idx_ok) throw std::runtime_error("对拍: indices 不一致（第 " + std::to_string(k) + " 批）");
+                if (!lab_ok) throw std::runtime_error("对拍: labels 不一致（第 " + std::to_string(k) + " 批）");
+                // 精确比较：两边跑的是同一串算子、同样的输入、同样的形状，
+                // 每个算子都是确定性的（与被切成几份无关），所以必须逐位相等。
+                if (!img_ok) throw std::runtime_error("对拍: images 不一致（第 " + std::to_string(k) + " 批）");
+            }
+
+            std::printf("  [对拍] 前 %lld 批逐元素相同\n\n", (long long)n_batches);
+        }
+    }  // namespace
+
     void check_workers_equivalence(const std::string& data_dir,
                                    const data::LoaderOpts& opt,
                                    uint64_t seed,
@@ -112,36 +146,27 @@ namespace prkd::test_unit
         data::ImageNetLoader ld_sync(data_dir, o_sync, seed);
         data::ImageNetLoader ld_thread(data_dir, opt, seed);
 
-        ld_sync.start_epoch(0);
-        ld_thread.start_epoch(0);
-
         std::printf("  [对拍] workers=0  vs  workers=%lld\n", (long long)opt.workers);
-
-        for (int64_t k = 0; k < n_batches; ++k)
-        {
-            const auto a = ld_sync.next();
-            const auto c = ld_thread.next();
-
-            const bool idx_ok = (a.indices == c.indices);
-            const bool lab_ok = torch::equal(a.labels, c.labels);
-
-            // 精确比较：两边跑的是同一串算子、同样的输入、同样的形状，
-            // 每个算子都是确定性的（与被切成几份无关），所以必须逐位相等。
-            const bool img_ok = torch::equal(a.images, c.images);
-
-            std::printf("  [对拍] batch %lld  indices %s  labels %s  images %s\n",
-                (long long)k,
-                idx_ok ? "OK" : "✗", lab_ok ? "OK" : "✗", img_ok ? "OK" : "✗");
-
-            if (!idx_ok) throw std::runtime_error("对拍: indices 不一致（第 " + std::to_string(k) + " 批）");
-            if (!lab_ok) throw std::runtime_error("对拍: labels 不一致（第 " + std::to_string(k) + " 批）");
-            if (!img_ok) throw std::runtime_error("对拍: images 不一致（第 " + std::to_string(k) + " 批）");
-        }
-
-        std::printf("  [对拍] 前 %lld 批逐元素相同\n\n", (long long)n_batches);
+        compare_batches(ld_sync, ld_thread, n_batches);
     }
 
-    void run_one_epoch(data::ImageNetLoader& ld)
+    void check_workers_equivalence_aloi(const std::string& root,
+                                        const data::AloiOpts& opt,
+                                        uint64_t seed,
+                                        int64_t n_batches)
+    {
+        data::AloiOpts o_sync = opt;
+        o_sync.workers = 0;
+
+        data::AloiLoader ld_sync(root, o_sync, seed);
+        data::AloiLoader ld_thread(root, opt, seed);
+
+        std::printf("  [对拍] ALOI  workers=0  vs  workers=%lld  view[%lld,%lld)\n",
+            (long long)opt.workers, (long long)opt.view_begin, (long long)opt.view_end);
+        compare_batches(ld_sync, ld_thread, n_batches);
+    }
+
+    void run_one_epoch(data::LoaderCore& ld)
     {
         using clk = std::chrono::steady_clock;
 
@@ -207,7 +232,7 @@ namespace prkd::test_unit
             ? "→ 这一轮读到的图全部干净"
             : "→ 有坏图（按要求只计数、不跳过）");
     }
-    int64_t write_bad_images(const data::ImageNetLoader& ld, const std::string& path)
+    int64_t write_bad_images(const data::LoaderCore& ld, const std::string& path)
     {
         namespace fs = std::filesystem;
 

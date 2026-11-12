@@ -2,6 +2,15 @@
 
 #include <cstring>   // std::memset：MSVC 靠 <stdio.h> 间接带进来，glibc 不会
 
+// PNG 解码：stb_image（通用解码器，单文件、公共领域）。
+// 不用 fpng —— 它的解码器只认自己编码的文件，通用 PNG 会返回 NOT_FPNG。
+//
+// ★ STB_IMAGE_IMPLEMENTATION 必须定义在【唯一】一处 include 之前。
+//   stb 的头文件默认只声明接口；定义这个宏的那一份才生成实现（含 stbi_failure_reason 等）。
+//   全项目只有这里定义 —— 谁再 include 一次并重复定义，链接期会出现重复符号。
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 
 extern "C"
 {
@@ -41,6 +50,57 @@ namespace prkd::data
         {
             return static_cast<uint8_t>((static_cast<unsigned>(a) * b + 127u) / 255u);
         }
+
+        // ---- PNG ----
+        // 为什么不用 fpng：它的解码器只认【自己编码】的文件。
+        //   fpng.h 原文："fpng_decode_memory() decompresses 24/32bpp PNG files
+        //   ONLY encoded by this module ... otherwise it will return FPNG_DECODE_NOT_FPNG
+        //   in which case you should fall back to a general purpose PNG decoder."
+        // ALOI 的 PNG 是别的工具产的 ⇒ 每张都会返回 NOT_FPNG。
+        // 所以这里用 stb_image：通用 PNG 解码器，单文件、公共领域。
+        //
+        // 与 libjpeg 那条路的取舍不同：stb 没有"有损继续"，CRC 不对就直接失败，
+        // 所以 decode_warnings 恒为 0、decode_complete 恒为 true。
+        // 注意：JPEG 仍然走 libjpeg-turbo —— 它更快，而且它的 warning 计数
+        // 是 ImageNet 那边做"坏图统计"的依据，不能换掉。
+        constexpr uint8_t kPngSig[8] = { 0x89, 'P', 'N', 'G', 0x0D, 0x0A, 0x1A, 0x0A };
+
+        bool looks_like_png(const uint8_t* p, size_t n)
+        {
+            return n >= 8 && std::memcmp(p, kPngSig, 8) == 0;
+        }
+
+        // 直接要三通道：ALOI 是 color type 2（RGB），本来就没有 alpha。
+        // stb 对带 alpha 的图也会按需求降成三通道 —— 省掉一段 RGBA→RGB 的拷贝循环。
+        Bitmap decode_png_rgb8(const uint8_t* bytes, size_t n)
+        {
+            int w = 0, h = 0, ch = 0;
+            stbi_uc* px = stbi_load_from_memory(bytes, static_cast<int>(n), &w, &h, &ch, 3);
+            if (px == nullptr)
+            {
+                const char* why = stbi_failure_reason();
+                throw std::runtime_error("decode_rgb8: PNG 解码失败 -- "
+                                         + std::string(why ? why : "未知原因"));
+            }
+            if (w <= 0 || h <= 0)
+            {
+                stbi_image_free(px);
+                throw std::runtime_error("decode_rgb8: PNG 尺寸为 0");
+            }
+
+            Bitmap bm;
+            bm.w = w;
+            bm.h = h;
+            bm.c = 3;
+            bm.decode_warnings = 0;
+            bm.decode_complete = true;
+
+            const size_t npix = static_cast<size_t>(w) * h;
+            bm.data.resize(npix * 3);
+            std::memcpy(bm.data.data(), px, npix * 3);
+            stbi_image_free(px);          // 必须还：stb 用它自己的分配器
+            return bm;
+        }
     }  // namespace
 
     Bitmap decode_rgb8(const uint8_t* bytes, size_t n)
@@ -48,6 +108,14 @@ namespace prkd::data
         if (bytes == nullptr || n == 0)
         {
             throw std::runtime_error("decode_rgb8: 空输入");
+        }
+
+        // 按文件头分流：PNG 那条路完全不碰 libjpeg。
+        // 放在这里而不是更后面 —— 后面紧跟 cinfo 的 memset 与 setjmp，
+        // 插在它们之前才不会留下"初始化完 libjpeg 再返回"的路径。
+        if (looks_like_png(bytes, n))
+        {
+            return decode_png_rgb8(bytes, n);
         }
 
         jpeg_decompress_struct cinfo;

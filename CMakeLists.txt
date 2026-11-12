@@ -41,15 +41,14 @@ find_package(Threads REQUIRED)
 message(STATUS "JPEG include: ${JPEG_INCLUDE_DIR}")
 message(STATUS "JPEG library: ${JPEG_LIBRARY}")
 
-# ---------------- vendor: fpng ----------------
-# PNG 解码。只支持 8 位 RGB/RGBA、不隔行 —— 正是 ALOI 的格式。
-# 单独成静态库：它的警告与你的代码隔离，且 fpng.cpp 不变就不重编。
-add_library(fpng STATIC "src/vendor/fpng/fpng.cpp")
-target_include_directories(fpng PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/vendor/fpng")
-if(MSVC)
-  target_compile_options(fpng PRIVATE /W0)   # 第三方代码不参与你的警告标准
-endif()
-set_target_properties(fpng PROPERTIES FOLDER "vendor")
+# ---------------- vendor: stb_image ----------------
+# PNG 解码用 stb_image：单头文件、公共领域，实现在 decode.cpp 里生成（全项目只 include 一次）。
+#
+# 为什么不是 fpng：fpng 的解码器只认【它自己编码】的文件，别的工具产的 PNG 一律返回
+# FPNG_DECODE_NOT_FPNG —— 而 ALOI 的 72,000 张 PNG 正是别的工具产的。
+# fpng 源码仍留在 src/vendor/fpng（它的编码器是全 PNG 里最快的），
+# 但这里既不编译也不链接；将来要写 PNG 时再加回来。
+set(STB_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src/vendor/stb")
 
 # ---------------- 源文件 ----------------
 # 手写清单。CMake 不扫目录 —— 新加文件必须在这里补一行，否则不会进编译。
@@ -65,6 +64,8 @@ set(APP_SOURCES
     "src/data/loader_core.cpp"
     "src/data/imagenet_loader.h"
     "src/data/imagenet_loader.cpp"
+    "src/data/aloi_loader.h"
+    "src/data/aloi_loader.cpp"
     "src/data/transform.h"
     "src/data/transform.cpp"
     "src/data/decode.h"
@@ -95,8 +96,10 @@ set(APP_SOURCES
 add_executable(pca_relational_kd ${APP_SOURCES})
 
 # ---------------- 头文件路径与链接 ----------------
-target_include_directories(pca_relational_kd PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/src")
-target_link_libraries(pca_relational_kd PRIVATE torch JPEG::JPEG fpng Threads::Threads)
+target_include_directories(pca_relational_kd PRIVATE
+  "${CMAKE_CURRENT_SOURCE_DIR}/src"
+  ${STB_INCLUDE_DIR})
+target_link_libraries(pca_relational_kd PRIVATE torch JPEG::JPEG Threads::Threads)
 
 # ---------------- 编译器选项（仅 MSVC）----------------
 if(MSVC)

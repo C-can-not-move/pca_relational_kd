@@ -44,6 +44,18 @@ namespace prkd::cfg
         bool drop_last = true;
     };
 
+    // ALOI 没有 /train 与 /val —— 它的 split 就是视角范围（左闭右开）。
+    // 只在 run.dataset = aloi 时被读到。
+    struct AloiSettings
+    {
+        int64_t view_begin = 0;      // 含
+        int64_t view_end   = 360;    // 不含
+
+        // 半圈训练/测试：{0,180} 与 {180,360}
+        // 冒烟测试（只读 r0）：{0,5}
+        // 全量看 PCA：{0,360}
+    };
+
     struct DebugSettings
     {
         int  intra    = 1;      // ATen intra-op 线程数；1 = 不让它和 worker 抢核
@@ -54,6 +66,7 @@ namespace prkd::cfg
     {
         RunConfig      run;
         LoaderSettings loader;
+        AloiSettings   aloi;
         DebugSettings  debug;
     };
 

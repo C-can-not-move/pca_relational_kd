@@ -132,6 +132,10 @@ namespace prkd::cfg
             else if (key == "loader.shuffle")    s.loader.shuffle    = parse_bool(value, where);
             else if (key == "loader.drop_last")  s.loader.drop_last  = parse_bool(value, where);
 
+            // ---- aloi（只在 run.dataset = aloi 时被读）----
+            else if (key == "aloi.view_begin") s.aloi.view_begin = parse_int(value, where);
+            else if (key == "aloi.view_end")   s.aloi.view_end   = parse_int(value, where);
+
             // ---- debug ----
             else if (key == "debug.intra")    s.debug.intra    = static_cast<int>(parse_int(value, where));
             else if (key == "debug.selftest") s.debug.selftest = parse_bool(value, where);
@@ -151,6 +155,13 @@ namespace prkd::cfg
         {
             throw std::runtime_error(path + ": run.dataset 只能是 imagenet 或 aloi，收到 \""
                                      + s.run.dataset + "\"");
+        }
+        if (s.aloi.view_begin < 0 || s.aloi.view_end > 360 ||
+            s.aloi.view_end <= s.aloi.view_begin)
+        {
+            throw std::runtime_error(path + ": aloi 视角范围非法 ["
+                                     + std::to_string(s.aloi.view_begin) + ","
+                                     + std::to_string(s.aloi.view_end) + ")，要求 0 <= begin < end <= 360");
         }
 
     }
@@ -182,6 +193,15 @@ namespace prkd::cfg
         std::printf("[cfg]   shuffle       = %s\n", s.loader.shuffle ? "true" : "false");
         std::printf("[cfg]   drop_last     = %s%s\n", s.loader.drop_last ? "true" : "false",
                     s.loader.drop_last ? "" : "（末批可短）");
+
+        // ALOI 的 split 不是目录，是视角范围 —— 单独一节。
+        // 只在 dataset=aloi 时打印，免得看 imagenet 的日志时多出一段无关信息。
+        if (s.run.dataset == "aloi")
+        {
+            std::printf("[cfg] ---------- aloi：视角范围（就是 split）----------\n");
+            std::printf("[cfg]   view          = [%lld, %lld)  左闭右开\n",
+                        (long long)s.aloi.view_begin, (long long)s.aloi.view_end);
+        }
 
         std::printf("[cfg] ---------- debug：诊断 ----------\n");
         std::printf("[cfg]   intra         = %d\n", s.debug.intra);

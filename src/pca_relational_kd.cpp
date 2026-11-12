@@ -62,6 +62,52 @@ int main(int argc, char** argv)
                 "没有指定 data_dir —— 写进 prkd.ini 的 run.data_dir");
         }
 
+        const uint64_t seed = static_cast<uint64_t>(st.run.seed);
+
+        // ================================================================
+        // ALOI：没有 /train 与 /val，划分靠视角范围
+        // ================================================================
+        if (st.run.dataset == "aloi")
+        {
+            prkd::data::AloiOpts aopt;
+            aopt.batch_size     = st.loader.batch;
+            aopt.workers        = st.loader.workers;
+            aopt.prefetch_depth = st.loader.prefetch;
+            aopt.crop           = st.loader.crop;
+            aopt.shuffle        = st.loader.shuffle;
+            aopt.drop_last      = st.loader.drop_last;
+            aopt.view_begin     = st.aloi.view_begin;
+            aopt.view_end       = st.aloi.view_end;
+
+            std::printf("\n===== ALOI  视角 [%lld, %lld) =====\n",
+                (long long)aopt.view_begin, (long long)aopt.view_end);
+
+            if (st.debug.selftest && aopt.workers > 0)
+            {
+                prkd::test_unit::check_workers_equivalence_aloi(
+                    st.run.data_dir, aopt, seed, /*n_batches=*/3);
+            }
+
+            prkd::data::AloiLoader ld(st.run.data_dir, aopt, seed);
+
+            prkd::test_unit::check_index(ld);
+            prkd::test_unit::run_one_epoch(ld);
+            prkd::test_unit::print_decode_health(ld.stats());
+
+            if (ld.bad_count() > 0)
+            {
+                const std::string bad_path = st.run.out_dir + "/bad_images.tsv";
+                const int64_t written = prkd::test_unit::write_bad_images(ld, bad_path);
+                std::printf("坏图存档    : %s（%lld 条里的前 %lld 条）\n",
+                    bad_path.c_str(), (long long)ld.bad_count(), (long long)written);
+            }
+            std::printf("OK\n");
+            return 0;
+        }
+
+        // ================================================================
+        // ImageNet：目录即 split
+        // ================================================================
         prkd::data::LoaderOpts opt;
         opt.batch_size = st.loader.batch;
         opt.workers = st.loader.workers;
@@ -79,7 +125,6 @@ int main(int argc, char** argv)
 
         const std::string data_dir =
             st.run.data_dir + (st.loader.is_train ? "/train" : "/val");
-        const uint64_t seed = static_cast<uint64_t>(st.run.seed);
 
         std::printf("\n===== %s =====\n", data_dir.c_str());
 
