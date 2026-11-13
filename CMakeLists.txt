@@ -16,8 +16,11 @@ if(WIN32)
     set(LIBTORCH_ROOT "D:/DATA/C++_lib/libtorch_cu126")
     # WIN这里不写CUDA是因为环境变量CUDA_PATH已经指向了CUDA安装目录，CMake会自动找到CUDA。
 else()
-    set(LIBTORCH_ROOT "/home/chenzhijiang/userFile/C++_lib/libtorch")
-    set(CUDA_TOOLKIT_ROOT_DIR "/home/chenzhijiang/userFile/cuda_126")
+    # Linux 侧全部用绝对路径写死（不依赖环境变量）——
+    # 目标机是老师的账号，环境变量一律不动，路径只改这一处。
+    set(LIBTORCH_ROOT        "/home/bigcircle/workplace/czj_temp/C++_lib/libtorch126")
+    set(CUDA_TOOLKIT_ROOT_DIR "/home/bigcircle/workplace/czj_temp/cuda_126")
+    set(GCC13_LIB64          "/home/bigcircle/workplace/czj_temp/gcc_13/lib64")
 endif()
 
 list(APPEND CMAKE_PREFIX_PATH "${LIBTORCH_ROOT}")
@@ -28,7 +31,7 @@ message(STATUS "libtorch: ${TORCH_INSTALL_PREFIX}   (${Torch_VERSION})")
 if(WIN32)
     set(LIBJPEG_TURBO_ROOT "D:/DATA/C++_lib/libjpeg-turbo")# 用导入库 jpeg.lib ⇒ 运行期需要 jpeg62.dll，见下方 POST_BUILD
 else()
-    set(LIBJPEG_TURBO_ROOT "/home/chenzhijiang/userFile/C++_lib/libjpeg-turbo")
+    set(LIBJPEG_TURBO_ROOT "/home/bigcircle/workplace/czj_temp/C++_lib/libjpeg-turbo")
 endif()
 
 list(APPEND CMAKE_PREFIX_PATH "${LIBJPEG_TURBO_ROOT}")   # 必须在 find_package 之前
@@ -125,12 +128,12 @@ else()
   # Windows 靠拷 DLL，Linux 靠 RPATH。
   #   · libtorch/lib：DT_RPATH 对间接依赖也生效，libcudart.so.12 靠它找到
   #   · libjpeg 的 lib：否则运行时找不到 libjpeg.so
-  #   · conda 的 lib：若用 conda 的 gcc 编译，它要 GLIBCXX_3.4.30+，系统那份没有
+  #   · gcc_13/lib64：本机编译器编出来的程序要 GLIBCXX_3.4.31+，系统的只到 3.4.28
+  #
+  # ★ 这里【不】加 $ENV{CONDA_PREFIX}/lib：目标机是老师的账号，conda 一直处于激活状态，
+  #   一旦把它写进 rpath，就会加载到 conda 那套 libstdc++，出错时表现为随机崩溃而非报缺库。
   get_filename_component(_JPEG_LIB_DIR "${JPEG_LIBRARY}" DIRECTORY)
-  set(_PRKD_RPATH "${TORCH_INSTALL_PREFIX}/lib;${_JPEG_LIB_DIR}")
-  if(DEFINED ENV{CONDA_PREFIX})
-    list(APPEND _PRKD_RPATH "$ENV{CONDA_PREFIX}/lib")
-  endif()
+  set(_PRKD_RPATH "${TORCH_INSTALL_PREFIX}/lib;${_JPEG_LIB_DIR};${GCC13_LIB64}")
   set_target_properties(pca_relational_kd PROPERTIES
     BUILD_RPATH   "${_PRKD_RPATH}"
     INSTALL_RPATH "${_PRKD_RPATH}")

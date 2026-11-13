@@ -1,6 +1,7 @@
-﻿# prkd.ini —— 一次运行的配置。
+# prkd.ini.example —— 一次运行的配置（示例 / 模板）
 #
-# 用法：pca_relational_kd [配置文件路径]      不给就是当前目录下的 prkd.ini
+# 用法：复制成 prkd.ini，再把 【要改的三处】 填上。
+#        pca_relational_kd [配置文件路径]      不给就是当前目录下的 prkd.ini
 # 打不开这个文件 → 直接报错退出（没有"用默认值跑起来"这种退路）。
 #
 # 规则：
@@ -8,20 +9,51 @@
 #   · 按【第一个】= 切分，值里可以再有 =
 #   · 未知 key 报错并带行号；拼错的 worker = 8 不会静默失效
 #   · true / false 只认这两个小写词
+#
+# ★ 当前入口只做【ImageNet 数据体检】：不建模型、不加载权重、不碰 GPU。
+#   因此 run.dataset 必须是 imagenet；ckpt / device_index / aloi.* 填了也不会被执行，
+#   保留它们是为了把 ALOI + PCA 那段接回来时不用再改一遍结构。
 
-# ---- 在哪训 ----
-run.data_dir     = 
-run.out_dir      = 
-run.device_index = 0
+# ---- 在哪读 ----
+run.dataset      = imagenet   # 当前入口只认 imagenet
+run.data_dir     =            # ★ 要改：ImageNet 根目录（代码自己拼 /train 或 /val）
+run.out_dir      =            # ★ 要改：坏图清单 bad_images.tsv 写到这里
+run.ckpt         =            # 本轮不加载权重，留空
+run.device_index = 0          # 本轮不碰 GPU，填什么都无所谓
 run.seed         = 2026
 
+# ---- ALOI：视角范围就是它的 split（左闭右开）----
+#
+# 【当前入口用不到】—— run.dataset = imagenet 时这两行不会被读。
+# 保留是因为它们记录了一条规则：跳过 _r0 目录靠的是"目录名必须全数字"，
+# 不是靠这两个数。
+#
+#   全量看 PCA       [0, 360)     1000 类 × 72 = 72,000 张
+#   半圈训练/测试     [0, 180) / [180, 360)      各 36,000 张
+#   冒烟（只读 r0）   [0, 5)       1000 张
+aloi.view_begin  = 0
+aloi.view_end    = 360
+
 # ---- 怎么读 ----
-loader.workers    = 6      # 0 = 自动（逻辑核数/2 ≈ 物理核数）；本机 6
+loader.workers    = 6      # 0 = 自动（逻辑核数/2 ≈ 物理核数）
 loader.batch      = 64
+loader.prefetch   = 4      # 预取池深度：同时几批在飞
 loader.short_side = 256    # val 的 Resize 短边；V1 权重 256，V2 用 232
 loader.crop       = 224
-loader.train      = true   # false = val 分支（不洗牌、末批可短）
+
+# 下面三项互相独立，谁也不派生谁 —— 三种模式各自把三行写全：
+#
+#   训练       train=true   shuffle=true   drop_last=true
+#   评测       train=false  shuffle=false  drop_last=false   ← 末批可短
+#   对拍用评测  train=false  shuffle=false  drop_last=true    ← 整除，但会丢末尾几张
+#
+# 只改 train 不改另外两行，会得到"中心裁剪但洗牌且丢尾巴"这种合法又反直觉的组合；
+# 启动打印里 [cfg] 和 [loader] 两处都会把它列出来。
+loader.train      = true
+loader.shuffle    = true
+loader.drop_last  = true
 
 # ---- 诊断 ----
 debug.intra      = 1       # ATen intra-op 线程数；1 = 不让它和 worker 抢核
-debug.selftest   = true    # 扫参数时改 false，省两次索引构建
+debug.selftest   = true    # 对拍单线程/多线程是否逐字节一致；扫参数时改 false
+debug.log_every  = 50      # 长循环的进度间隔（批）；0 = 不打印
