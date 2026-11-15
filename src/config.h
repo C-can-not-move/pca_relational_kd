@@ -63,12 +63,32 @@ namespace prkd::cfg
         int64_t log_every = 50; // 长循环的进度间隔（批）；0 = 不打印
     };
 
+    // 训练超参。原先写在 main 的 TrainArgs 里，现在挪进来 ——
+    // 理由：换一次配方就改一个 ini，不用重编。
+    //
+    // 刻意【不】包含 batch：批是 loader 的事（loader.batch），trainer 只收批。
+    struct TrainSettings
+    {
+        int64_t epochs       = 3;
+        double  lr           = 0.1;
+        double  momentum     = 0.9;
+        double  weight_decay = 1e-4;
+        int64_t log_every    = 50;   // 每多少批打一行；0 = 不打
+
+        // 续跑时 lr 从哪儿来：
+        //   true  = 按本配置的 train.lr（想在续跑时改 lr / 接着做衰减，用这个）
+        //   false = 保留 opt.pt 里存的那份（想要"原样接着跑"用这个）
+        // 只有 load_optimizer_state 之后才有区别 —— 那个接口会把超参一起恢复。
+        bool    resume_lr_from_config = true;
+    };
+
     struct Settings
     {
         RunConfig      run;
         LoaderSettings loader;
         AloiSettings   aloi;
         DebugSettings  debug;
+        TrainSettings  train;
     };
 
     // 平台默认值。workers = 0 会在这里解析成实际值 ——

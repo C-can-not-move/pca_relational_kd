@@ -10,9 +10,9 @@
 #   · 未知 key 报错并带行号；拼错的 worker = 8 不会静默失效
 #   · true / false 只认这两个小写词
 #
-# ★ 当前入口只做【ImageNet 数据体检】：不建模型、不加载权重、不碰 GPU。
-#   因此 run.dataset 必须是 imagenet；ckpt / device_index / aloi.* 填了也不会被执行，
-#   保留它们是为了把 ALOI + PCA 那段接回来时不用再改一遍结构。
+# ★ 当前入口是【ResNet-18 的 ImageNet 训练循环】：
+#   建模型、上 GPU、每轮训练 + 评估，并在 out_dir/train/seed<seed>/{auto,best} 存档。
+#   ckpt / aloi.* 现在还没被读，保留是为了把 ALOI + PCA 那段接回来时不用改结构。
 
 # ---- 在哪读 ----
 run.dataset      = imagenet   # 当前入口只认 imagenet
@@ -52,6 +52,16 @@ loader.crop       = 224
 loader.train      = true
 loader.shuffle    = true
 loader.drop_last  = true
+
+# ---- 训练配方 ----
+# 这里【没有】batch：批属于 loader.batch，trainer 只收批。
+# 两者要匹配：torchvision 的配方是 batch 256 配 lr 0.1；batch 64 的话 lr 约 0.025。
+# 启动时会打一行 [train] batch=… lr=…，配比不对还会额外提醒一次。
+train.epochs       = 3
+train.lr           = 0.1
+train.momentum     = 0.9
+train.weight_decay = 1e-4
+train.log_every    = 50      # 每多少批打一行；0 = 不打
 
 # ---- 诊断 ----
 debug.intra      = 1       # ATen intra-op 线程数；1 = 不让它和 worker 抢核

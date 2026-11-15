@@ -12,6 +12,8 @@
 #include "model/resnet.h"
 #include "model/checkpoint.h"
 
+#include "train/trainer.h"
+
 #include "util/pca.h"
 
 #include "test_unit/loader_check.h"

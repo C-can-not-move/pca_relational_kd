@@ -51,6 +51,29 @@ namespace prkd::cfg
             if (v == "false") return false;
             throw std::runtime_error(where + ": 只认 true / false，给的是 \"" + v + "\"");
         }
+
+        // 与 parse_int 同样的严格性：整个字符串都得被吃掉，"0.1x" 不能静默变成 0.1。
+        // 另外拒绝科学计数法以外的怪写法不是目的 —— stod 认 1e-4，这个必须能过。
+        double parse_double(const std::string& v, const std::string& where)
+        {
+            if (v.empty()) throw std::runtime_error(where + ": 值为空");
+
+            size_t used = 0;
+            double x = 0.0;
+            try
+            {
+                x = std::stod(v, &used);
+            }
+            catch (const std::exception&)
+            {
+                throw std::runtime_error(where + ": 值不是数字 \"" + v + "\"");
+            }
+            if (used != v.size())
+            {
+                throw std::runtime_error(where + ": 值不是数字 \"" + v + "\"");
+            }
+            return x;
+        }
     }  // namespace
 
     Settings defaults()
@@ -141,6 +164,20 @@ namespace prkd::cfg
             else if (key == "debug.selftest") s.debug.selftest = parse_bool(value, where);
             else if (key == "debug.log_every") s.debug.log_every = parse_int(value, where);
 
+            // ---- train（训练超参；不含 batch，批属于 loader）----
+            else if (key == "train.epochs")       s.train.epochs       = parse_int(value, where);
+            else if (key == "train.lr")           s.train.lr           = parse_double(value, where);
+            else if (key == "train.momentum")     s.train.momentum     = parse_double(value, where);
+            else if (key == "train.weight_decay") s.train.weight_decay = parse_double(value, where);
+            else if (key == "train.log_every")    s.train.log_every    = parse_int(value, where);
+            else if (key == "train.resume_lr")
+            {
+                if (value == "config")   s.train.resume_lr_from_config = true;
+                else if (value == "keep") s.train.resume_lr_from_config = false;
+                else throw std::runtime_error(where + ": train.resume_lr 只认 config / keep，给的是 \""
+                    + value + "\"");
+            }
+
             // ★ 未知 key 一律报错。拼错的 "worker = 8" 静默失效是最坑的一种。
             else throw std::runtime_error(where + ": 未知配置项 \"" + key + "\"");
         }
@@ -153,6 +190,12 @@ namespace prkd::cfg
         if (s.loader.crop       <= 0) throw std::runtime_error(path + ": loader.crop 必须 > 0");
         if (s.debug.intra       <  1) throw std::runtime_error(path + ": debug.intra 必须 >= 1");
         if (s.debug.log_every   <  0) throw std::runtime_error(path + ": debug.log_every 不能为负（0 = 不打印进度）");
+        if (s.train.epochs      <  1) throw std::runtime_error(path + ": train.epochs 必须 >= 1");
+        if (s.train.lr          <= 0) throw std::runtime_error(path + ": train.lr 必须 > 0");
+        if (s.train.momentum    <  0 || s.train.momentum >= 1)
+            throw std::runtime_error(path + ": train.momentum 必须在 [0,1) 内");
+        if (s.train.weight_decay < 0) throw std::runtime_error(path + ": train.weight_decay 不能为负");
+        if (s.train.log_every   <  0) throw std::runtime_error(path + ": train.log_every 不能为负（0 = 不打印）");
         if (s.run.dataset != "imagenet" && s.run.dataset != "aloi")
         {
             throw std::runtime_error(path + ": run.dataset 只能是 imagenet 或 aloi，收到 \""
@@ -204,6 +247,17 @@ namespace prkd::cfg
             std::printf("[cfg]   view          = [%lld, %lld)  左闭右开\n",
                         (long long)s.aloi.view_begin, (long long)s.aloi.view_end);
         }
+
+        std::printf("[cfg] ---------- train：训练配方（不含 batch，批属于 loader）----------\n");
+        std::printf("[cfg]   epochs        = %lld\n", (long long)s.train.epochs);
+        std::printf("[cfg]   lr            = %g\n", s.train.lr);
+        std::printf("[cfg]   momentum      = %g\n", s.train.momentum);
+        std::printf("[cfg]   weight_decay  = %g\n", s.train.weight_decay);
+        std::printf("[cfg]   log_every     = %lld%s\n", (long long)s.train.log_every,
+                    s.train.log_every == 0 ? "（不打印）" : " 批");
+        std::printf("[cfg]   resume_lr     = %s（续跑时 lr 取自 %s）\n",
+                    s.train.resume_lr_from_config ? "config" : "keep",
+                    s.train.resume_lr_from_config ? "本配置" : "opt.pt");
 
         std::printf("[cfg] ---------- debug：诊断 ----------\n");
         std::printf("[cfg]   intra         = %d\n", s.debug.intra);
