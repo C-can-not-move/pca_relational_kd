@@ -74,6 +74,18 @@ set(APP_SOURCES
     "src/data/decode.h"
     "src/data/decode.cpp"
 
+    # 序列化（格式、对齐、原子写的唯一实现处）
+    "src/save/tensor_table.h"
+    "src/save/tensor_table.cpp"
+    "src/save/param_index.h"
+    "src/save/param_index.cpp"
+    "src/save/state_file.h"
+    "src/save/state_file.cpp"
+    "src/save/sha1.h"
+    "src/save/sha1.cpp"
+    "src/save/slot_dir.h"
+    "src/save/slot_dir.cpp"
+
     # 网络与存档
     "src/model/resnet.h"
     "src/model/resnet.cpp"
