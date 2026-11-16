@@ -1,4 +1,4 @@
-﻿// pca_relational_kd.cpp —— 入口：ResNet-18 的普通 ImageNet 训练循环
+// pca_relational_kd.cpp —— 入口：ResNet-18 的普通 ImageNet 训练循环
 //
 //   ① 读配置
 //   ② 建 loader（train + val 各一个）
@@ -314,8 +314,16 @@ int main(int argc, char** argv)
 			{
 				prkd::save::load_optimizer_state(auto_dir, optimizer);
 
-				// opt.pt 里带着存档那一刻的 lr / momentum / weight_decay。
-				// 想在续跑时换 lr，必须显式覆盖 —— 否则改 config 是不生效的。
+				// ⚠ opt.load() 会把 param_groups 的 options 一起恢复 ——
+				//   lr / momentum / weight_decay / dampening / nesterov 全都变回存档那一刻的值。
+				//
+				//   目前只对 lr 提供"按配置覆盖"：
+				//     OptimizerOptions::set_lr 是虚函数，基类就能改；
+				//     weight_decay / momentum 在 SGDOptions / AdamOptions 各自的字段里，要 cast 才能改。
+				//
+				//   ⇒ 续跑时改 train.momentum / train.weight_decay【不会生效】，这是有意的取舍：
+				//     超参是一组，让一部分听配置、一部分听存档，反而更容易配出没人想要的组合。
+				//     哪天真的需要，再加 train.resume_hparams = config|keep 统一控制。
 				if (st.train.resume_lr_from_config)
 				{
 					for (auto& g : optimizer.param_groups())
