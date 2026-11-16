@@ -63,6 +63,19 @@ train.momentum     = 0.9
 train.weight_decay = 1e-4
 train.log_every    = 50      # 每多少批打一行；0 = 不打
 
+# 续跑时 lr 从哪儿来（只有存在断点时才起作用）：
+#   config = 按本文件的 train.lr
+#   keep   = 保留 opt.pt 里存的那份
+# 原因：官方 archive 会把 lr / betas / weight_decay 一起存，加载时覆盖当前值。
+train.resume_lr    = config
+
+# best 从训练的哪个位置开始【写盘】（比例，不是轮数）：
+#   0     每次都写 —— 最安全，但每刷新一次就是几十 MB
+#   0.75  默认：前 3/4 的"最好"几乎必然被后面刷掉，只留内存；后 1/4 每次刷新就写
+#   1     全程不写，只在收尾写一次 —— 最省，但崩溃时丢 best
+# 内存里始终保留最新那份 best，收尾无论如何会落一次盘。
+train.best_write_from = 0.75
+
 # ---- 诊断 ----
 debug.intra      = 1       # ATen intra-op 线程数；1 = 不让它和 worker 抢核
 debug.selftest   = true    # 对拍单线程/多线程是否逐字节一致；扫参数时改 false

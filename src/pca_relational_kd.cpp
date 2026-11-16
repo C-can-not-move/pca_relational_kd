@@ -56,6 +56,47 @@ namespace
 		return std::make_unique<prkd::data::ImageNetLoader>(
 			split_dir(st, is_train), make_loader_opts(st, is_train), seed);
 	}
+	// ---- 预训练模型的导出 ----
+	//
+	// 与断点存档是两种产物：
+	//   断点    auto/ + best/      给"自己接着跑"，固定名、覆盖写、带优化器与状态
+	//   预训练  pretrained/<名字>   给"以后拿去用"，按名字留档、不覆盖、只有权重
+	//
+	// 格式是 model.txt + model.bin（文本键表 + 裸字节）—— Python 侧能直接读的那种。
+	// 名字里带 epoch 与验证准确率，是为了事后挑：xx_ep012_acc0.4123.txt
+	// 导出"可交付"的预训练权重：<arch>_acc0.4123.{txt,bin}
+	//
+	// 磁盘上只保留一份：写入前先把同目录里同 arch 的旧文件删掉。
+	// 名字里的 acc 是给"人看"的（一眼知道这份多好），但版本不累积 ——
+	// 累积会让 pretrained/ 变成一堆没人分得清先后的文件。
+	std::string export_pretrained(const prkd::model::ResNet& model,
+		const std::string& dir,
+		const char* arch,
+		double acc)
+	{
+		std::filesystem::create_directories(dir);
+
+		// 先清旧的：<arch>_acc*.txt / .bin
+		const std::string prefix = std::string(arch) + "_acc";
+		std::error_code ec;
+		for (const auto& e : std::filesystem::directory_iterator(dir, ec))
+		{
+			if (!e.is_regular_file()) continue;
+			const std::string fn = e.path().filename().string();
+			if (fn.rfind(prefix, 0) != 0) continue;               // 前缀不对，跳过
+			const std::string ext = e.path().extension().string();
+			if (ext != ".txt" && ext != ".bin") continue;
+			std::filesystem::remove(e.path(), ec);
+		}
+
+		char name[160];
+		std::snprintf(name, sizeof(name), "%s_acc%.4f", arch, acc);
+
+		const std::string base = dir + "/" + name;
+		prkd::model::save_checkpoint(model, base);      // 写出 <base>.txt + <base>.bin
+		std::printf("[export] 预训练模型 <- %s.{txt,bin}（旧的那份已删除）\n", name);
+		return base;
+	}
 }  // namespace
 
 int main(int argc, char** argv)
@@ -159,12 +200,14 @@ int main(int argc, char** argv)
 
 		// ---- ⑤ 存档目录 ----
 		// 一轮一个 run 目录：out_dir/train/seed<seed>/
-		//   auto/   每轮覆盖，权重 + 优化器，续跑用
-		//   best/   仅在更好时覆盖，只有权重，报数 / 导出用
+		//   auto/        每轮覆盖，权重 + 优化器，续跑用（固定名）
+		//   best/        仅在更好时覆盖，只有权重（固定名）
+		// out_dir/pretrained/   按名字留档的预训练权重，不覆盖、不带优化器（给以后拿去用）
 		const std::string run_dir = st.run.out_dir + "/train/seed" + std::to_string(st.run.seed);
 		std::printf("[ckpt] run_dir = %s\n", run_dir.c_str());
-		const std::string auto_dir = run_dir + "/auto";
-		const std::string best_dir = run_dir + "/best";
+		const std::string auto_dir     = run_dir + "/auto";
+		const std::string best_dir     = run_dir + "/best";
+		const std::string pretrain_dir = st.run.out_dir + "/pretrained";
 		std::filesystem::create_directories(auto_dir);
 		std::filesystem::create_directories(best_dir);
 
@@ -228,6 +271,19 @@ int main(int argc, char** argv)
 		double best_acc = -1.0;
 		double best_loss = 0.0;
 		int64_t best_epoch = -1;
+
+		// best 的"内存版"：权重快照 + 当时的 SlotState。
+		// 写盘策略：前段只留内存（best_write_from 之前），后段每次刷新都写（延迟方案）。
+		// 这样早段那些"必然被刷掉"的中间结果不会落到盘上。
+		const int64_t best_write_from_epoch =
+			std::max<int64_t>(1, static_cast<int64_t>(
+				std::ceil(static_cast<double>(st.train.epochs) * st.train.best_write_from)));
+		prkd::save::TensorMap best_snapshot;
+		prkd::save::SlotState best_state;
+		bool best_ready = false;
+		bool best_on_disk = false;      // 盘上那份是否已经是最新的 best
+
+
 		int64_t start_epoch = 1;
 		bool resumed = false;
 
@@ -334,6 +390,8 @@ int main(int argc, char** argv)
 			const auto va = prkd::train::evaluate(model, *val_ld, device, tcfg);
 			std::printf("[epoch %lld] val   loss %.4f acc %.4f (%.0f img/s, %.1f s)\n",(long long)epoch, va.loss, va.acc(), va.img_per_sec(), va.seconds);
 
+
+
 			// ③ 更好才覆盖 best：acc 高者胜；acc 相同看 loss；再相同保留更早的（避免无意义重写）
 			const bool better = (best_epoch < 0)
 				|| (va.acc() > best_acc)
@@ -341,20 +399,57 @@ int main(int argc, char** argv)
 
 			if (better)
 			{
-				best_acc = va.acc();
-				best_loss = va.loss;
+				best_acc   = va.acc();
+				best_loss  = va.loss;
 				best_epoch = epoch;
 
-				auto bs = make_state(epoch);
-				bs.best_metric = best_acc;
-				bs.best_epoch  = best_epoch;
-				prkd::save::save_slot(best_dir, model, nullptr, bs,cfg_path, prkd::save::ModelFormat::Archive);
-				std::printf("[ckpt] best <- epoch %lld  acc %.4f\n",(long long)epoch, best_acc);
+				// ★ best 只留在【内存】里：拷一份 CPU 快照 + 一份当时的 SlotState。
+				//   不写盘的理由：best 每次刷新都写一份 45 MB（ResNet-18）/ 240 MB（152），
+				//   90 轮下来是几十份没人会用的中间版本。
+				//   代价：进程若在中途崩掉，最好那份就没了（auto/ 里的最后一轮还在）。
+				best_snapshot = prkd::save::dump(model);      // detached / CPU / contiguous
+				best_state    = make_state(epoch);
+				best_state.best_metric = best_acc;
+				best_state.best_epoch  = best_epoch;
+				best_ready    = true;
+
+				if (epoch >= best_write_from_epoch)
+				{
+					// 后段：刷新就写（乙方案）。覆盖写，永远只有一份。
+					prkd::save::save_slot(best_dir, model, nullptr, best_state, cfg_path,prkd::save::ModelFormat::Archive);
+					best_on_disk = true;
+					std::printf("[ckpt] best <- epoch %lld  acc %.4f（已落盘）\n",(long long)epoch, best_acc);
+				}
+				else
+				{
+					std::printf("[ckpt] best <- epoch %lld  acc %.4f（仅内存，%lld 轮后才写盘）\n",(long long)epoch, best_acc, (long long)best_write_from_epoch);
+				}
 			}
 			std::fflush(stdout);
 		}
 
+		// ---- 收尾：best 落一次盘 + 预训练导一次 ----
+		//
+		// 训练过程中 best 一直只在内存里（见上面那段的理由）。
+		// 到这里才写两次盘，且都是"唯一那一份"：
+		//   ① best/        续跑与报数用（固定路径，覆盖写）
+		//   ② pretrained/  交付物（名字带 acc）
 		std::printf("\n[done] best epoch=%lld acc=%.4f\n",(long long)best_epoch, best_acc);
+
+		if (best_ready)
+		{
+			// 把内存快照装回模型 —— 此刻模型上是"最后一轮"的权重，不是最好的
+			prkd::save::restore(model, best_snapshot);
+
+			// 如果盘上还没有（best 停在前段、或者根本没进后段），这里补一次
+			if (!best_on_disk)
+				prkd::save::save_slot(best_dir, model, nullptr, best_state, cfg_path,
+					prkd::save::ModelFormat::Archive);
+
+			const std::string exported =
+				export_pretrained(model, pretrain_dir, "resnet18", best_acc);
+			std::printf("[done] 预训练权重: %s.{txt,bin}\n", exported.c_str());
+		}
 		std::printf("OK\n");
 		return 0;
 	}

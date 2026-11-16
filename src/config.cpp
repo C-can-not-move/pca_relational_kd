@@ -170,6 +170,7 @@ namespace prkd::cfg
             else if (key == "train.momentum")     train.momentum     = parse_double(value, where);
             else if (key == "train.weight_decay") train.weight_decay = parse_double(value, where);
             else if (key == "train.log_every")    train.log_every    = parse_int(value, where);
+            else if (key == "train.best_write_from") train.best_write_from = parse_double(value, where);
             else if (key == "train.resume_lr")
             {
                 if (value == "config")   train.resume_lr_from_config = true;
@@ -192,21 +193,18 @@ namespace prkd::cfg
         if (debug.log_every   <  0) throw std::runtime_error(path + ": debug.log_every 不能为负（0 = 不打印进度）");
         if (train.epochs      <  1) throw std::runtime_error(path + ": train.epochs 必须 >= 1");
         if (train.lr          <= 0) throw std::runtime_error(path + ": train.lr 必须 > 0");
-        if (train.momentum    <  0 || train.momentum >= 1)
-            throw std::runtime_error(path + ": train.momentum 必须在 [0,1) 内");
+        if (train.momentum    <  0 || train.momentum >= 1) throw std::runtime_error(path + ": train.momentum 必须在 [0,1) 内");
         if (train.weight_decay < 0) throw std::runtime_error(path + ": train.weight_decay 不能为负");
         if (train.log_every   <  0) throw std::runtime_error(path + ": train.log_every 不能为负（0 = 不打印）");
+        if (train.best_write_from < 0.0 || train.best_write_from > 1.0) throw std::runtime_error(path + ": train.best_write_from 必须是 [0,1] 的比例（0=每次写，1=只在收尾写）");
         if (run.dataset != "imagenet" && run.dataset != "aloi")
         {
-            throw std::runtime_error(path + ": run.dataset 只能是 imagenet 或 aloi，收到 \""
-                                     + run.dataset + "\"");
+            throw std::runtime_error(path + ": run.dataset 只能是 imagenet 或 aloi，收到 \""+ run.dataset + "\"");
         }
         if (aloi.view_begin < 0 || aloi.view_end > 360 ||
             aloi.view_end <= aloi.view_begin)
         {
-            throw std::runtime_error(path + ": aloi 视角范围非法 ["
-                                     + std::to_string(aloi.view_begin) + ","
-                                     + std::to_string(aloi.view_end) + ")，要求 0 <= begin < end <= 360");
+            throw std::runtime_error(path + ": aloi 视角范围非法 [" + std::to_string(aloi.view_begin) + ","+ std::to_string(aloi.view_end) + ")，要求 0 <= begin < end <= 360");
         }
 
     }
@@ -247,11 +245,9 @@ namespace prkd::cfg
         std::printf("[cfg]   lr            = %g\n", train.lr);
         std::printf("[cfg]   momentum      = %g\n", train.momentum);
         std::printf("[cfg]   weight_decay  = %g\n", train.weight_decay);
-        std::printf("[cfg]   log_every     = %lld%s\n", (long long)train.log_every,
-                    train.log_every == 0 ? "（不打印）" : " 批");
-        std::printf("[cfg]   resume_lr     = %s（续跑时 lr 取自 %s）\n",
-                    train.resume_lr_from_config ? "config" : "keep",
-                    train.resume_lr_from_config ? "本配置" : "opt.pt");
+        std::printf("[cfg]   log_every     = %lld%s\n", (long long)train.log_every,train.log_every == 0 ? "（不打印）" : " 批");
+        std::printf("[cfg]   resume_lr     = %s（续跑时 lr 取自 %s）\n",train.resume_lr_from_config ? "config" : "keep",train.resume_lr_from_config ? "本配置" : "opt.pt");
+        std::printf("[cfg]   best_write_from = %.2f（best 从训练后 %.0f%% 处开始写盘，之前只在内存）\n",train.best_write_from, (1.0 - train.best_write_from) * 100.0);
 
         std::printf("[cfg] ---------- debug：诊断 ----------\n");
         std::printf("[cfg]   intra         = %d\n", debug.intra);

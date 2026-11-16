@@ -21,6 +21,7 @@
 #include "model/resnet.h"
 #include "model/checkpoint.h"
 
+#include "save/param_index.h"   // dump / restore / names（权重与 buffer 的有序表）
 #include "save/slot_dir.h"      // 存档槽：save_slot / load_slot_state / load_model / load_optimizer_state
 
 #include "train/trainer.h"
@@ -32,6 +33,7 @@
 
 #include <algorithm>   // std::min
 #include <chrono>      // 计时
+#include <cmath>       // std::ceil（best 写盘起始轮）
 #include <cstdio>      // std::printf / std::fprintf
 #include <cstdlib>     // std::strtoll
 #include <exception>   // std::exception

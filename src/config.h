@@ -80,6 +80,12 @@ namespace prkd::cfg
         //   false = 保留 opt.pt 里存的那份（想要"原样接着跑"用这个）
         // 只有 load_optimizer_state 之后才有区别 —— 那个接口会把超参一起恢复。
         bool    resume_lr_from_config = true;
+
+        // best 从训练的哪个位置开始【写盘】（0–1 的比例，默认 0.75 = 最后四分之一）。
+        // 前 3/4 的"最好"几乎必然被后面刷掉，写下去只是白占磁盘；
+        // 但内存里一直留着最新的 best，收尾时无论如何会落一次盘。
+        // 0 = 每次都写；1 = 全程不写（只在收尾写）。
+        double  best_write_from = 0.75;
     };
 
     struct Settings
