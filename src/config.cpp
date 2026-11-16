@@ -1,4 +1,4 @@
-﻿#include "config.h"
+#include "config.h"
 
 #include <cctype>
 #include <cstdio>
@@ -140,6 +140,7 @@ namespace prkd::cfg
             if      (key == "run.data_dir")     run.data_dir = value;
             else if (key == "run.out_dir")      run.out_dir = value;
             else if (key == "run.ckpt")         run.ckpt = value;
+            else if (key == "run.task")          run.task = value;
             else if (key == "run.dataset")      run.dataset = value;
             else if (key == "run.device_index") run.device_index =
                                                     static_cast<int>(parse_int(value, where));
@@ -212,6 +213,7 @@ namespace prkd::cfg
     void Settings::print() const
     {
         std::printf("[cfg] ---------- run：在哪训 ----------\n");
+        std::printf("[cfg]   task          = %s\n", run.task.c_str());
         std::printf("[cfg]   dataset       = %s\n", run.dataset.c_str());
         std::printf("[cfg]   data_dir      = %s\n", run.data_dir.empty() ? "(未设置)" : run.data_dir.c_str());
         std::printf("[cfg]   out_dir       = %s\n", run.out_dir.c_str());

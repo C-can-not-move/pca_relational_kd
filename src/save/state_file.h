@@ -48,6 +48,7 @@ namespace prkd::save
 		// —— 收尾状态 ——
 		int         finished    = 0;    // 1 = 训练正常结束（不是被打断）
 		double      best_metric = 0.0;
+		double      best_loss   = 0.0;   // best 那一轮的验证 loss —— acc 打平时用它比
 		int64_t     best_epoch  = -1;
 		std::string saved_at;           // ISO8601，本地时区
 	};

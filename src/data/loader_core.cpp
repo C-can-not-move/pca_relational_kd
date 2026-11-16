@@ -243,13 +243,20 @@ namespace prkd::data
         // 清池：把在飞的批全部作废。
         // 正常流程下 epoch 结束时池里已经没有未交付的批，所以这里通常是空操作；
         // 提前 break / 异常时才有东西丢。那些批不浪费 —— 派生种子保证重算逐位相同。
+        //
+        // ★ 只把【做完的】槽还回 free_slots_。
+        //   以前是无条件全部还回去：如果上一轮是中途 break，某些 worker 还在写
+        //   pool_[i]，下一轮 publish_more 会把同一个槽再分给新批 —— 两批并发写同一块内存，
+        //   既不崩也不报错，只是数据偶尔错得莫名其妙。
+        //   代价：真有在飞的批时池会暂时变小（少一个槽），但那是正确行为。
         {
             std::lock_guard<std::mutex> lk(q_mu_);
             q_.clear();
             free_slots_.clear();
             for (int64_t i = 0; i < static_cast<int64_t>(pool_.size()); ++i)
             {
-                free_slots_.push_back(i);
+                if (pool_[static_cast<size_t>(i)].remaining.load(std::memory_order_acquire) == 0)
+                    free_slots_.push_back(i);
             }
             std::fill(batch_done_.begin(), batch_done_.end(), false);
             std::fill(batch_slot_.begin(), batch_slot_.end(), -1);
@@ -376,6 +383,7 @@ namespace prkd::data
                 if (!err_) err_ = std::current_exception();
             }
             has_err_.store(true, std::memory_order_relaxed);
+            ready_cv_.notify_all();      // 让等待方立刻重算谓词
         }
 
         // 最后一个做完的人负责报齐。

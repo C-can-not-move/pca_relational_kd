@@ -17,6 +17,10 @@ namespace prkd::cfg
 
     struct RunConfig
     {
+        // 这次跑哪个任务：base18 / pre152 / kd
+        // 命令行第二个参数会覆盖它：pca_relational_kd prkd.ini pre152
+        std::string task = "base18";
+
         std::string data_dir;              // 数据集根；ImageNet 会在其下拼 /train 或 /val
         std::string out_dir = "./run";     // checkpoint 等落在这里
         std::string ckpt;                  // 要加载的权重前缀，如 .../run/resnet152_1000；空 = 不加载

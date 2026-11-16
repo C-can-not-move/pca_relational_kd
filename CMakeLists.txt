@@ -59,6 +59,10 @@ set(APP_SOURCES
     # 入口与配置
     "src/pca_relational_kd.h"
     "src/pca_relational_kd.cpp"
+
+    # ---- 任务层：一个任务一个文件，共用 train 循环 ----
+    "src/task/task_base.cpp"       # 监督训练（base18 / pre152）
+    "src/task/task_kd.cpp"         # 蒸馏（暂为空实现）
     "src/config.h"
     "src/config.cpp"
 

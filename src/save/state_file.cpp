@@ -70,6 +70,7 @@ namespace prkd::save
 		os << "# 收尾状态\n";
 		put(os, "finished", st.finished);
 		put(os, "best_metric", st.best_metric);
+		put(os, "best_loss", st.best_loss);
 		put(os, "best_epoch", st.best_epoch);
 		put(os, "saved_at", st.saved_at);
 
@@ -117,6 +118,11 @@ namespace prkd::save
 		st.flags             = need("flags");
 		st.finished     = std::stoi(need("finished"));
 		st.best_metric  = std::stod(need("best_metric"));
+		// best_loss 是后来加的字段：旧存档没有它，按 0 处理（不抛，兼容老槽）
+		{
+			const auto it = kv.find("best_loss");
+			st.best_loss = (it == kv.end()) ? 0.0 : std::stod(it->second);
+		}
 		st.best_epoch   = std::stoll(need("best_epoch"));
 		st.saved_at     = need("saved_at");
 		return st;
