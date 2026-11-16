@@ -36,7 +36,14 @@ namespace prkd::save
 		// 可推导的东西不抄第二份。本 epoch 第一个 batch 只在日志里打一行，不进 state。
 		std::string model_format;       // "archive"（model.pt）或 "both"（model.pt + model.txt/bin）
 		std::string config_sha1;        // config.ini 的 sha1，判断配置有没有被改过
-		std::string flags;              // deterministic=1 benchmark=0 threads=8
+
+		// flags：算子层的确定性条件快照。
+		//   格式 = 空格分隔的 k=v 对，例如
+		//     "benchmark=0 determ_cudnn=0 determ_algo=0 threads=1"
+		//   ⚠ 只用空格分隔，不要逗号/分号 —— 这样脚本能直接按空格切，按 = 取值。
+		//   ⚠ 值必须由【运行时回读】生成（at::globalContext().benchmarkCuDNN() 等），
+		//     不要手写：手写的字段迟早会和实际状态脱钩，而脱钩的留证比没有更糟。
+		std::string flags;
 
 		// —— 收尾状态 ——
 		int         finished    = 0;    // 1 = 训练正常结束（不是被打断）

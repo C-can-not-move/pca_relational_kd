@@ -89,18 +89,29 @@ namespace prkd::cfg
         AloiSettings   aloi;
         DebugSettings  debug;
         TrainSettings  train;
+
+        // 读 ini 并覆盖自己的字段。
+        //   打不开 → 抛 std::runtime_error（配置是刚需，没有"用默认值跑起来"这种退路）
+        //   未知 key / 值非法 → 同样抛，消息带 "路径:行号"
+        // 做成成员：读的目标就是自己，传一个 Settings& 进来只是把 this 又写一遍。
+        void load_file(const std::string& path);
+
+        // 启动时把配置打一遍 —— 日志里能追溯"这次是用什么参数跑的"。
+        // 做成成员而不是自由函数，理由：
+        //   ① 打印的内容与字段在同一个类型里，加字段时不容易漏打
+        //   ② 调用处是 st.print()，读起来就知道打的是"这一份 st"
+        //   ③ 不需要在参数上再写一遍 const Settings&
+        void print() const;
+
+        // 只打一行摘要（放日志头部用）：dataset / batch / lr / epochs / seed
+        // 与 print() 分开：前者太吵、后者太短，两个用途不该互相迁就。
+        // 返回 string 而不是 const char*：调用方可能要拼进别的日志里，
+        // 返回裸指针就得管一块谁都不清楚的静态缓冲。
+        std::string summary() const;
     };
 
     // 平台默认值。workers = 0 会在这里解析成实际值 ——
     // 好处是 print() 打出来的永远是"实际会用到的数"，不是 0。
     Settings defaults();
-
-    // 读 ini 并覆盖 s 里已有的值。
-    //   打不开 → 抛 std::runtime_error（配置是刚需，没有"用默认值跑起来"这种退路）
-    //   未知 key / 值非法 → 同样抛，消息带 "路径:行号"
-    void load_file(const std::string& path, Settings& s);
-
-    // 启动时把配置打一遍 —— 日志里能追溯"这次是用什么参数跑的"
-    void print(const Settings& s);
 
 }  // namespace prkd::cfg

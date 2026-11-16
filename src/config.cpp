@@ -1,4 +1,4 @@
-#include "config.h"
+﻿#include "config.h"
 
 #include <cctype>
 #include <cstdio>
@@ -89,7 +89,7 @@ namespace prkd::cfg
         return s;
     }
 
-    void load_file(const std::string& path, Settings& s)
+    void Settings::load_file(const std::string& path)
     {
         std::ifstream f(path);
         if (!f)
@@ -137,43 +137,43 @@ namespace prkd::cfg
             if (key.empty()) throw std::runtime_error(where + ": 键名为空");
 
             // ---- run ----
-            if      (key == "run.data_dir")     s.run.data_dir = value;
-            else if (key == "run.out_dir")      s.run.out_dir = value;
-            else if (key == "run.ckpt")         s.run.ckpt = value;
-            else if (key == "run.dataset")      s.run.dataset = value;
-            else if (key == "run.device_index") s.run.device_index =
+            if      (key == "run.data_dir")     run.data_dir = value;
+            else if (key == "run.out_dir")      run.out_dir = value;
+            else if (key == "run.ckpt")         run.ckpt = value;
+            else if (key == "run.dataset")      run.dataset = value;
+            else if (key == "run.device_index") run.device_index =
                                                     static_cast<int>(parse_int(value, where));
-            else if (key == "run.seed")         s.run.seed = parse_int(value, where);
+            else if (key == "run.seed")         run.seed = parse_int(value, where);
 
             // ---- loader ----
-            else if (key == "loader.workers")    s.loader.workers    = parse_int(value, where);
-            else if (key == "loader.batch")      s.loader.batch      = parse_int(value, where);
-            else if (key == "loader.prefetch")   s.loader.prefetch   = parse_int(value, where);
-            else if (key == "loader.short_side") s.loader.short_side = parse_int(value, where);
-            else if (key == "loader.crop")       s.loader.crop       = parse_int(value, where);
-            else if (key == "loader.train")      s.loader.is_train   = parse_bool(value, where);
-            else if (key == "loader.shuffle")    s.loader.shuffle    = parse_bool(value, where);
-            else if (key == "loader.drop_last")  s.loader.drop_last  = parse_bool(value, where);
+            else if (key == "loader.workers")    loader.workers    = parse_int(value, where);
+            else if (key == "loader.batch")      loader.batch      = parse_int(value, where);
+            else if (key == "loader.prefetch")   loader.prefetch   = parse_int(value, where);
+            else if (key == "loader.short_side") loader.short_side = parse_int(value, where);
+            else if (key == "loader.crop")       loader.crop       = parse_int(value, where);
+            else if (key == "loader.train")      loader.is_train   = parse_bool(value, where);
+            else if (key == "loader.shuffle")    loader.shuffle    = parse_bool(value, where);
+            else if (key == "loader.drop_last")  loader.drop_last  = parse_bool(value, where);
 
             // ---- aloi（只在 run.dataset = aloi 时被读）----
-            else if (key == "aloi.view_begin") s.aloi.view_begin = parse_int(value, where);
-            else if (key == "aloi.view_end")   s.aloi.view_end   = parse_int(value, where);
+            else if (key == "aloi.view_begin") aloi.view_begin = parse_int(value, where);
+            else if (key == "aloi.view_end")   aloi.view_end   = parse_int(value, where);
 
             // ---- debug ----
-            else if (key == "debug.intra")    s.debug.intra    = static_cast<int>(parse_int(value, where));
-            else if (key == "debug.selftest") s.debug.selftest = parse_bool(value, where);
-            else if (key == "debug.log_every") s.debug.log_every = parse_int(value, where);
+            else if (key == "debug.intra")    debug.intra    = static_cast<int>(parse_int(value, where));
+            else if (key == "debug.selftest") debug.selftest = parse_bool(value, where);
+            else if (key == "debug.log_every") debug.log_every = parse_int(value, where);
 
             // ---- train（训练超参；不含 batch，批属于 loader）----
-            else if (key == "train.epochs")       s.train.epochs       = parse_int(value, where);
-            else if (key == "train.lr")           s.train.lr           = parse_double(value, where);
-            else if (key == "train.momentum")     s.train.momentum     = parse_double(value, where);
-            else if (key == "train.weight_decay") s.train.weight_decay = parse_double(value, where);
-            else if (key == "train.log_every")    s.train.log_every    = parse_int(value, where);
+            else if (key == "train.epochs")       train.epochs       = parse_int(value, where);
+            else if (key == "train.lr")           train.lr           = parse_double(value, where);
+            else if (key == "train.momentum")     train.momentum     = parse_double(value, where);
+            else if (key == "train.weight_decay") train.weight_decay = parse_double(value, where);
+            else if (key == "train.log_every")    train.log_every    = parse_int(value, where);
             else if (key == "train.resume_lr")
             {
-                if (value == "config")   s.train.resume_lr_from_config = true;
-                else if (value == "keep") s.train.resume_lr_from_config = false;
+                if (value == "config")   train.resume_lr_from_config = true;
+                else if (value == "keep") train.resume_lr_from_config = false;
                 else throw std::runtime_error(where + ": train.resume_lr 只认 config / keep，给的是 \""
                     + value + "\"");
             }
@@ -183,86 +183,94 @@ namespace prkd::cfg
         }
 
         // 值域检查集中放在最后：逐行检查的话，多行都错时只会看到第一条
-        if (s.loader.workers    <  0) throw std::runtime_error(path + ": loader.workers 不能为负");
-        if (s.loader.batch      <= 0) throw std::runtime_error(path + ": loader.batch 必须 > 0");
-        if (s.loader.prefetch   <  1) throw std::runtime_error(path + ": loader.prefetch 必须 >= 1");
-        if (s.loader.short_side <= 0) throw std::runtime_error(path + ": loader.short_side 必须 > 0");
-        if (s.loader.crop       <= 0) throw std::runtime_error(path + ": loader.crop 必须 > 0");
-        if (s.debug.intra       <  1) throw std::runtime_error(path + ": debug.intra 必须 >= 1");
-        if (s.debug.log_every   <  0) throw std::runtime_error(path + ": debug.log_every 不能为负（0 = 不打印进度）");
-        if (s.train.epochs      <  1) throw std::runtime_error(path + ": train.epochs 必须 >= 1");
-        if (s.train.lr          <= 0) throw std::runtime_error(path + ": train.lr 必须 > 0");
-        if (s.train.momentum    <  0 || s.train.momentum >= 1)
+        if (loader.workers    <  0) throw std::runtime_error(path + ": loader.workers 不能为负");
+        if (loader.batch      <= 0) throw std::runtime_error(path + ": loader.batch 必须 > 0");
+        if (loader.prefetch   <  1) throw std::runtime_error(path + ": loader.prefetch 必须 >= 1");
+        if (loader.short_side <= 0) throw std::runtime_error(path + ": loader.short_side 必须 > 0");
+        if (loader.crop       <= 0) throw std::runtime_error(path + ": loader.crop 必须 > 0");
+        if (debug.intra       <  1) throw std::runtime_error(path + ": debug.intra 必须 >= 1");
+        if (debug.log_every   <  0) throw std::runtime_error(path + ": debug.log_every 不能为负（0 = 不打印进度）");
+        if (train.epochs      <  1) throw std::runtime_error(path + ": train.epochs 必须 >= 1");
+        if (train.lr          <= 0) throw std::runtime_error(path + ": train.lr 必须 > 0");
+        if (train.momentum    <  0 || train.momentum >= 1)
             throw std::runtime_error(path + ": train.momentum 必须在 [0,1) 内");
-        if (s.train.weight_decay < 0) throw std::runtime_error(path + ": train.weight_decay 不能为负");
-        if (s.train.log_every   <  0) throw std::runtime_error(path + ": train.log_every 不能为负（0 = 不打印）");
-        if (s.run.dataset != "imagenet" && s.run.dataset != "aloi")
+        if (train.weight_decay < 0) throw std::runtime_error(path + ": train.weight_decay 不能为负");
+        if (train.log_every   <  0) throw std::runtime_error(path + ": train.log_every 不能为负（0 = 不打印）");
+        if (run.dataset != "imagenet" && run.dataset != "aloi")
         {
             throw std::runtime_error(path + ": run.dataset 只能是 imagenet 或 aloi，收到 \""
-                                     + s.run.dataset + "\"");
+                                     + run.dataset + "\"");
         }
-        if (s.aloi.view_begin < 0 || s.aloi.view_end > 360 ||
-            s.aloi.view_end <= s.aloi.view_begin)
+        if (aloi.view_begin < 0 || aloi.view_end > 360 ||
+            aloi.view_end <= aloi.view_begin)
         {
             throw std::runtime_error(path + ": aloi 视角范围非法 ["
-                                     + std::to_string(s.aloi.view_begin) + ","
-                                     + std::to_string(s.aloi.view_end) + ")，要求 0 <= begin < end <= 360");
+                                     + std::to_string(aloi.view_begin) + ","
+                                     + std::to_string(aloi.view_end) + ")，要求 0 <= begin < end <= 360");
         }
 
     }
 
-    void print(const Settings& s)
+    void Settings::print() const
     {
         std::printf("[cfg] ---------- run：在哪训 ----------\n");
-        std::printf("[cfg]   dataset       = %s\n", s.run.dataset.c_str());
-        std::printf("[cfg]   data_dir      = %s\n", s.run.data_dir.empty() ? "(未设置)" : s.run.data_dir.c_str());
-        std::printf("[cfg]   out_dir       = %s\n", s.run.out_dir.c_str());
-        std::printf("[cfg]   ckpt          = %s\n", s.run.ckpt.empty() ? "(不加载)" : s.run.ckpt.c_str());
-        std::printf("[cfg]   device_index  = %d%s\n", s.run.device_index,
-                    s.run.device_index < 0 ? "（强制 CPU）" : "");
-        std::printf("[cfg]   seed          = %lld\n", (long long)s.run.seed);
+        std::printf("[cfg]   dataset       = %s\n", run.dataset.c_str());
+        std::printf("[cfg]   data_dir      = %s\n", run.data_dir.empty() ? "(未设置)" : run.data_dir.c_str());
+        std::printf("[cfg]   out_dir       = %s\n", run.out_dir.c_str());
+        std::printf("[cfg]   ckpt          = %s\n", run.ckpt.empty() ? "(不加载)" : run.ckpt.c_str());
+        std::printf("[cfg]   device_index  = %d%s\n", run.device_index,run.device_index < 0 ? "（强制 CPU）" : "");
+        std::printf("[cfg]   seed          = %lld\n", (long long)run.seed);
 
         std::printf("[cfg] ---------- loader：怎么读 ----------\n");
-        std::printf("[cfg]   workers       = %lld%s\n", (long long)s.loader.workers,
-                    s.loader.workers <= 0 ? "（同步，不起线程）" : "");
-        std::printf("[cfg]   batch         = %lld\n", (long long)s.loader.batch);
-        std::printf("[cfg]   prefetch      = %lld（池深：同时几批在飞）\n", (long long)s.loader.prefetch);
-        std::printf("[cfg]   short_side    = %lld\n", (long long)s.loader.short_side);
-        std::printf("[cfg]   crop          = %lld\n", (long long)s.loader.crop);
+        std::printf("[cfg]   workers       = %lld%s\n", (long long)loader.workers,loader.workers <= 0 ? "（同步，不起线程）" : "");
+        std::printf("[cfg]   batch         = %lld\n", (long long)loader.batch);
+        std::printf("[cfg]   prefetch      = %lld（池深：同时几批在飞）\n", (long long)loader.prefetch);
+        std::printf("[cfg]   short_side    = %lld\n", (long long)loader.short_side);
+        std::printf("[cfg]   crop          = %lld\n", (long long)loader.crop);
 
         // 三个开关并列打印：它们互相独立，配出"中心裁剪 + 洗牌 + 丢尾巴"是合法的，
         // 但那多半不是本意 —— 所以让它一眼可见，而不是靠代码拦。
-        std::printf("[cfg]   train         = %s（变换：%s）\n",
-                    s.loader.is_train ? "true" : "false",
-                    s.loader.is_train ? "增强" : "中心裁剪");
-        std::printf("[cfg]   shuffle       = %s\n", s.loader.shuffle ? "true" : "false");
-        std::printf("[cfg]   drop_last     = %s%s\n", s.loader.drop_last ? "true" : "false",
-                    s.loader.drop_last ? "" : "（末批可短）");
+        std::printf("[cfg]   train         = %s（变换：%s）\n",loader.is_train ? "true" : "false",loader.is_train ? "增强" : "中心裁剪");
+        std::printf("[cfg]   shuffle       = %s\n", loader.shuffle ? "true" : "false");
+        std::printf("[cfg]   drop_last     = %s%s\n", loader.drop_last ? "true" : "false",loader.drop_last ? "" : "（末批可短）");
 
         // ALOI 的 split 不是目录，是视角范围 —— 单独一节。
         // 只在 dataset=aloi 时打印，免得看 imagenet 的日志时多出一段无关信息。
-        if (s.run.dataset == "aloi")
+        if (run.dataset == "aloi")
         {
             std::printf("[cfg] ---------- aloi：视角范围（就是 split）----------\n");
-            std::printf("[cfg]   view          = [%lld, %lld)  左闭右开\n",
-                        (long long)s.aloi.view_begin, (long long)s.aloi.view_end);
+            std::printf("[cfg]   view          = [%lld, %lld)  左闭右开\n",(long long)aloi.view_begin, (long long)aloi.view_end);
         }
 
         std::printf("[cfg] ---------- train：训练配方（不含 batch，批属于 loader）----------\n");
-        std::printf("[cfg]   epochs        = %lld\n", (long long)s.train.epochs);
-        std::printf("[cfg]   lr            = %g\n", s.train.lr);
-        std::printf("[cfg]   momentum      = %g\n", s.train.momentum);
-        std::printf("[cfg]   weight_decay  = %g\n", s.train.weight_decay);
-        std::printf("[cfg]   log_every     = %lld%s\n", (long long)s.train.log_every,
-                    s.train.log_every == 0 ? "（不打印）" : " 批");
+        std::printf("[cfg]   epochs        = %lld\n", (long long)train.epochs);
+        std::printf("[cfg]   lr            = %g\n", train.lr);
+        std::printf("[cfg]   momentum      = %g\n", train.momentum);
+        std::printf("[cfg]   weight_decay  = %g\n", train.weight_decay);
+        std::printf("[cfg]   log_every     = %lld%s\n", (long long)train.log_every,
+                    train.log_every == 0 ? "（不打印）" : " 批");
         std::printf("[cfg]   resume_lr     = %s（续跑时 lr 取自 %s）\n",
-                    s.train.resume_lr_from_config ? "config" : "keep",
-                    s.train.resume_lr_from_config ? "本配置" : "opt.pt");
+                    train.resume_lr_from_config ? "config" : "keep",
+                    train.resume_lr_from_config ? "本配置" : "opt.pt");
 
         std::printf("[cfg] ---------- debug：诊断 ----------\n");
-        std::printf("[cfg]   intra         = %d\n", s.debug.intra);
-        std::printf("[cfg]   selftest      = %s\n", s.debug.selftest ? "true" : "false");
-        std::printf("[cfg]   log_every     = %lld%s\n", (long long)s.debug.log_every,
-                    s.debug.log_every == 0 ? "（不打印进度）" : " 批");
+        std::printf("[cfg]   intra         = %d\n", debug.intra);
+        std::printf("[cfg]   selftest      = %s\n", debug.selftest ? "true" : "false");
+        std::printf("[cfg]   log_every     = %lld%s\n", (long long)debug.log_every,debug.log_every == 0 ? "（不打印进度）" : " 批");
+    }
+
+    std::string Settings::summary() const
+    {
+        char buf[256];
+        std::snprintf(buf, sizeof(buf),
+            "dataset=%s batch=%lld lr=%g epochs=%lld seed=%lld device=%d",
+            run.dataset.c_str(),
+            (long long)loader.batch,
+            train.lr,
+            (long long)train.epochs,
+            (long long)run.seed,
+            run.device_index);
+        return std::string(buf);
     }
 }  // namespace prkd::cfg
+
