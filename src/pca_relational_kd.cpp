@@ -1,4 +1,4 @@
-// src/pca_relational_kd.cpp —— 入口：只做三件事（读配置 / 分发任务 / 统一报错）
+﻿// src/pca_relational_kd.cpp —— 入口：只做三件事（读配置 / 分发任务 / 统一报错）
 //
 // 三个任务：
 //   base18    训练 resnet18 基准
@@ -40,7 +40,7 @@ int main(int argc, char** argv)
 		// 必须在起任何线程 / 做任何 GPU 计算之前设。三样都是"整个进程一份"：
 		//   线程数   影响所有算子的并行归约次序
 		//   种子     影响所有随机源
-		//   算子层   benchmark = cuDNN 是否实测挑算法；关掉它，卷积实现才固定
+		//   算子层   benchmark = cuDNN 实测挑算法；关掉它，卷积实现才固定
 		// ⚠ 真实 API 是 at::globalContext().setBenchmarkCuDNN(false)
 		//   （没有 setBenchmarkEnabled；也没有 torch::globalContext）
 		torch::set_num_threads(st.debug.intra);
