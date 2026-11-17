@@ -1,18 +1,15 @@
-// src/task/task_base.cpp
+// src/task/task_pre152.cpp —— 任务 2：训练 resnet152
 //
-// "训练一个学生模型"这件事本身 —— 与具体是 resnet18 还是 152 无关。
+// 与 task_base18.cpp 是同一条流程的两份拷贝，故意不共享：
+// 两个任务的模型、名字、以后的超参都会分叉，共享一层只会让改动互相牵连。
 //
-// 这里只认三样东西：配置、模型工厂、名字。
-//   模型工厂   决定网络深度（h_resnet18 / h_resnet152 …）
-//   名字       决定存档目录、导出文件名、日志前缀
-//
-// 数据、循环、存档、断点、日志全在本文件里，只写一遍。
-// 蒸馏那边（task_kd.cpp）会复用其中大部分，差别只在损失。
+// 输出目录名用 resnet152，所以两套结果不会互相覆盖。
 
 #include "task/task.h"
 
 #include <torch/torch.h>
 
+#include <chrono>   // steady_clock（评估计时）
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -26,8 +23,15 @@
 #include "save/state_file.h"
 #include "train/trainer.h"
 
+// 任务 2：训练 resnet152。
+//
+// 与 task_base18.cpp 是同一条流程的两份拷贝 —— 故意不共享：
+// 两个任务的模型、名字、以后的超参都可能分叉，共享一层只会让改动互相牵连。
+
+
 namespace prkd::task
 {
+	// ---- 本文件内部用的小工具（只在这个 cpp 里可见）----
 	namespace
 	{
 		// ==================== 从配置到组件：只做翻译，不含算法 ====================
@@ -95,12 +99,10 @@ namespace prkd::task
 		}
 	}  // namespace
 
-	int run_train(const prkd::cfg::Settings& st,
-		const std::string& cfg_path,
-		const std::string& model_name,
-		const ModelFactory& make_model)
+	int run_pre152(const prkd::cfg::Settings& st, const std::string& cfg_path)
 	{
 		const uint64_t seed = static_cast<uint64_t>(st.run.seed);
+		const std::string model_name = "resnet152";   // 本任务固定
 
 		// ---- 设备 ----
 		torch::Device device = torch::kCPU;
@@ -119,7 +121,7 @@ namespace prkd::task
 			(long long)val_ld->num_batches());
 
 		// ---- 模型（由工厂决定深度）----
-		prkd::model::ResNet model = make_model(num_classes);
+		prkd::model::ResNet model = prkd::model::h_resnet152(num_classes);
 		model->to(device);
 
 		if (st.debug.selftest)

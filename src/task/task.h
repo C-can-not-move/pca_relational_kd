@@ -1,20 +1,20 @@
 // src/task/task.h
 //
-// 三个任务共用一套骨架：
+// 一个任务 = 一个 cpp 里的一个入口函数。main 只按名字分发。
 //
-//   任务 1  resnet18 基准        run_train(st, cfg, "resnet18", h_resnet18)
-//   任务 2  resnet152 预训练      run_train(st, cfg, "resnet152", h_resnet152)
-//   任务 3  蒸馏                 run_kd(...)   ← 与前者共用数据/存档，只换损失
+//   task_base18.cpp     run_base18      训练 resnet18 基准
+//   task_pre152.cpp     run_pre152      训练 resnet152
+//   task_eval18.cpp     run_eval18      评估 resnet18 的权重（只用 val）
+//   task_eval152.cpp    run_eval152     评估 resnet152 的权重
+//   task_kd.cpp         run_kd          蒸馏（未实现）
 //
-// 判据：三个任务真正不同的只有三样 —— 模型、损失、名字。
-// 所以 main 只做分发，训练流程只写一遍（task_base.cpp）。
+// 这几份实现**刻意不共享**：每个文件自成一体，改一个不会牵动另一个。
+// 代价是四份相似的代码；换来的是"改 152 的超参不会影响 18"。
 //
 // ⚠ 这里不 include 伞头 pca_relational_kd.h：伞头会 include 本文件，反过来就成环。
-//   任务层只依赖 config / model / torch，与"哪个入口在调它"无关。
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <string>
 
 #include <torch/torch.h>
@@ -24,24 +24,15 @@
 
 namespace prkd::task
 {
-	// 模型工厂：给定类别数，造一个网络。
-	//   用 std::function 而不是模板参数，是因为任务表要在运行期按字符串分发。
-	using ModelFactory = std::function<prkd::model::ResNet(int64_t num_classes)>;
+	// 训练（监督，交叉熵），带断点续跑与存档。抛异常表示失败，由 main 统一打印。
+	int run_base18(const prkd::cfg::Settings& st, const std::string& cfg_path);
+	int run_pre152(const prkd::cfg::Settings& st, const std::string& cfg_path);
 
-	// 训练一个学生模型（监督学习，交叉熵）。
-	//   st         已经读好的配置
-	//   cfg_path   配置文件路径 —— 会被原样复制进每个存档槽（留证）
-	//   model_name "resnet18" / "resnet152" —— 决定存档目录与导出文件名
-	//   make_model 模型工厂
-	//
-	// 返回 0 = 正常结束；抛异常表示失败（由 main 统一打印）。
-	int run_train(const prkd::cfg::Settings& st,
-		const std::string& cfg_path,
-		const std::string& model_name,
-		const ModelFactory& make_model);
+	// 只评估：权重前缀取 st.run.ckpt，在 val 上跑一遍，打印 acc。
+	int run_eval18(const prkd::cfg::Settings& st);
+	int run_eval152(const prkd::cfg::Settings& st);
 
-	// 蒸馏：与 run_train 共用数据、存档、断点、日志，差别只在损失（CE + 关系项）。
+	// 蒸馏：与训练共用数据/存档/断点/日志，差别只在损失（CE + 关系项）。
 	// 现在还没写 —— 教师权重链路通了之后再填。
-	int run_kd(const prkd::cfg::Settings& st,
-		const std::string& cfg_path);
+	int run_kd(const prkd::cfg::Settings& st, const std::string& cfg_path);
 }

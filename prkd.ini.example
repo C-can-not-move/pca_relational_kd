@@ -1,7 +1,16 @@
 # prkd.ini.example —— 一次运行的配置（示例 / 模板）
 #
 # 用法：复制成 prkd.ini，再把 【要改的三处】 填上。
-#        pca_relational_kd [配置文件路径]      不给就是当前目录下的 prkd.ini
+#        pca_relational_kd [配置文件路径] [任务名]
+          不给配置文件路径 → 当前目录下的 prkd.ini
+          不给任务名       → 用下面 run.task 的值
+
+# 任务名：
+#   base18    训练 resnet18 基准
+#   pre152    训练 resnet152
+#   eval18    评估 resnet18 的权重（读 run.ckpt，只用 val）
+#   eval152   评估 resnet152 的权重（同上）
+#   kd        蒸馏（未实现）
 # 打不开这个文件 → 直接报错退出（没有"用默认值跑起来"这种退路）。
 #
 # 规则：
@@ -20,7 +29,8 @@
 
 # ---- 在哪读 ----
 
-# 这次跑哪个任务（命令行第二个参数可覆盖）：base18 / pre152 / kd
+# 跑哪个任务：改这一行就行（命令行第二个参数也认，会覆盖这里）
+#   任务名一览见文件开头「用法」
 run.task         = base18
 run.dataset      = imagenet   # 当前入口只认 imagenet
 run.data_dir     =            # ★ 要改：ImageNet 根目录（代码自己拼 /train 或 /val）

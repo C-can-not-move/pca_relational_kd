@@ -1,4 +1,4 @@
-﻿// src/pca_relational_kd.cpp —— 入口：只做三件事（读配置 / 分发任务 / 统一报错）
+// src/pca_relational_kd.cpp —— 入口：只做三件事（读配置 / 分发任务 / 统一报错）
 //
 // 三个任务：
 //   base18    训练 resnet18 基准
@@ -55,14 +55,28 @@ int main(int argc, char** argv)
 		std::printf("[task] %s（模型名取它自己，存档目录 <out_dir>/train/<name>_seed<seed>/）\n",
 			task.c_str());
 
+		// 一个任务 = 一个入口函数（各自一个 cpp）。
+		// main 不认识的只有具体实现，它只按名字转发。
 		if (task == "base18")
-			return prkd::task::run_train(st, cfg_path, "resnet18", prkd::model::h_resnet18);
+			return prkd::task::run_base18(st, cfg_path);
 
 		if (task == "pre152")
-			return prkd::task::run_train(st, cfg_path, "resnet152", prkd::model::h_resnet152);
+			return prkd::task::run_pre152(st, cfg_path);
 
 		if (task == "kd")
 			return prkd::task::run_kd(st, cfg_path);
+
+		if (task == "eval18" || task == "eval152")
+		{
+			if (st.run.ckpt.empty())
+				throw std::runtime_error(
+					"task=" + task + " 需要 run.ckpt 指向权重前缀（不含扩展名）");
+
+			std::printf("[task] %s  权重=%s\n", task.c_str(), st.run.ckpt.c_str());
+
+			if (task == "eval18")  return prkd::task::run_eval18(st);
+			return prkd::task::run_eval152(st);
+		}
 
 		throw std::runtime_error(
 			"未知 run.task: \"" + task + "\"（可选：base18 / pre152 / kd）");

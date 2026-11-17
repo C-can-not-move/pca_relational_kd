@@ -61,7 +61,10 @@ set(APP_SOURCES
     "src/pca_relational_kd.cpp"
 
     # ---- 任务层：一个任务一个文件，共用 train 循环 ----
-    "src/task/task_base.cpp"       # 监督训练（base18 / pre152）
+    "src/task/task_base18.cpp"     # 任务 1：训练 resnet18
+    "src/task/task_pre152.cpp"     # 任务 2：训练 resnet152
+    "src/task/task_eval18.cpp"     # 任务 3：评估 resnet18 权重
+    "src/task/task_eval152.cpp"    # 任务 4：评估 resnet152 权重
     "src/task/task_kd.cpp"         # 蒸馏（暂为空实现）
     "src/config.h"
     "src/config.cpp"
