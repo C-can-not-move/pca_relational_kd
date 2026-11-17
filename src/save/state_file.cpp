@@ -44,42 +44,46 @@ namespace prkd::save
 		void put(std::ostringstream& os, const char* k, const std::string& v) { os << k << '=' << v << '\n'; }
 	}  // namespace
 
-	void save_state(const SlotState& st, const std::string& path)
+	// ---------------- 成员：写 ----------------
+
+	void SlotState::save_to(const std::string& path) const
 	{
 		std::ostringstream os;
 		os << "# pca_relational_kd · 一个存档槽的状态。字段说明见进度页第五节。\n";
 		os << "format=" << kFormat << '\n';
 
 		os << "# 进度（断点口径 = 已交付样本数）\n";
-		put(os, "epoch", st.epoch);
-		put(os, "samples_delivered", st.samples_delivered);
-		put(os, "total_steps", st.total_steps);
+		put(os, "epoch", epoch);
+		put(os, "samples_delivered", samples_delivered);
+		put(os, "total_steps", total_steps);
 
 		os << "# 复现与对账\n";
-		put(os, "seed", st.seed);
-		put(os, "dataset_size", st.dataset_size);
-		put(os, "batch_size", st.batch_size);
-		put(os, "drop_last", st.drop_last);
-		put(os, "accum", st.accum);
+		put(os, "seed", seed);
+		put(os, "dataset_size", dataset_size);
+		put(os, "batch_size", batch_size);
+		put(os, "drop_last", drop_last);
+		put(os, "accum", accum);
 
 		os << "# 留证（批次顺序不存：由 seed 与 epoch 派生）\n";
-		put(os, "model_format", st.model_format);
-		put(os, "config_sha1", st.config_sha1);
-		put(os, "flags", st.flags);
+		put(os, "model_format", model_format);
+		put(os, "config_sha1", config_sha1);
+		put(os, "flags", flags);
 
 		os << "# 收尾状态\n";
-		put(os, "finished", st.finished);
-		put(os, "best_metric", st.best_metric);
-		put(os, "best_loss", st.best_loss);
-		put(os, "best_epoch", st.best_epoch);
-		put(os, "saved_at", st.saved_at);
+		put(os, "finished", finished);
+		put(os, "best_metric", best_metric);
+		put(os, "best_loss", best_loss);
+		put(os, "best_epoch", best_epoch);
+		put(os, "saved_at", saved_at);
 
 		const auto parent = std::filesystem::path(path).parent_path();
 		if (!parent.empty()) std::filesystem::create_directories(parent);
 		write_atomic(path, os.str());
 	}
 
-	SlotState load_state(const std::string& path)
+	// ---------------- 成员：读 ----------------
+
+	SlotState SlotState::load_from(const std::string& path)
 	{
 		const std::string text = read_all(path);
 

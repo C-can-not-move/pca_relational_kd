@@ -109,7 +109,7 @@ namespace prkd::save
 		// ④ 状态 —— 最后写；它在 = 这个槽完整
 		st.model_format = to_string(fmt);
 		st.saved_at = now_iso8601();
-		save_state(st, dir + "/state.txt");
+		st.save_to(dir + "/state.txt");
 
 		std::cout << "[slot] saved -> " << dir
 			<< "   epoch=" << st.epoch << " samples=" << st.samples_delivered
@@ -120,7 +120,7 @@ namespace prkd::save
 
 	SlotState load_slot_state(const std::string& dir)
 	{
-		SlotState st = load_state(dir + "/state.txt");
+		const SlotState st = SlotState::load_from(dir + "/state.txt");
 
 		std::error_code ec;
 		if (std::filesystem::exists(dir + "/config.ini", ec))

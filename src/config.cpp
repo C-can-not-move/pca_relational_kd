@@ -180,6 +180,11 @@ namespace prkd::cfg
                     + value + "\"");
             }
 
+            // ---- kd（关系蒸馏；只对 task=kd 有意义）----
+            else if (key == "kd.keep")        kd.keep        = parse_int(value, where);
+            else if (key == "kd.lambda")      kd.lambda      = parse_double(value, where);
+            else if (key == "kd.pca_samples") kd.pca_samples = parse_int(value, where);
+
             // ★ 未知 key 一律报错。拼错的 "worker = 8" 静默失效是最坑的一种。
             else throw std::runtime_error(where + ": 未知配置项 \"" + key + "\"");
         }
@@ -197,6 +202,9 @@ namespace prkd::cfg
         if (train.momentum    <  0 || train.momentum >= 1) throw std::runtime_error(path + ": train.momentum 必须在 [0,1) 内");
         if (train.weight_decay < 0) throw std::runtime_error(path + ": train.weight_decay 不能为负");
         if (train.log_every   <  0) throw std::runtime_error(path + ": train.log_every 不能为负（0 = 不打印）");
+        if (kd.keep        <  1) throw std::runtime_error(path + ": kd.keep 必须 >= 1（保留的主轴数）");
+        if (kd.lambda      <  0) throw std::runtime_error(path + ": kd.lambda 不能为负（0 = 退化成纯 CE）");
+        if (kd.pca_samples <  1) throw std::runtime_error(path + ": kd.pca_samples 必须 >= 1");
         if (train.best_write_from < 0.0 || train.best_write_from > 1.0) throw std::runtime_error(path + ": train.best_write_from 必须是 [0,1] 的比例（0=每次写，1=只在收尾写）");
         if (run.dataset != "imagenet" && run.dataset != "aloi")
         {
@@ -250,6 +258,11 @@ namespace prkd::cfg
         std::printf("[cfg]   log_every     = %lld%s\n", (long long)train.log_every,train.log_every == 0 ? "（不打印）" : " 批");
         std::printf("[cfg]   resume_lr     = %s（续跑时 lr 取自 %s）\n",train.resume_lr_from_config ? "config" : "keep",train.resume_lr_from_config ? "本配置" : "opt.pt");
         std::printf("[cfg]   best_write_from = %.2f（best 从训练后 %.0f%% 处开始写盘，之前只在内存）\n",train.best_write_from, (1.0 - train.best_write_from) * 100.0);
+
+        std::printf("[cfg] ---------- kd：关系蒸馏（只在 task=kd 时读）----------\n");
+        std::printf("[cfg]   keep          = %lld（PCA 保留的主轴数）\n", (long long)kd.keep);
+        std::printf("[cfg]   lambda        = %.2f（关系损失权重；0 = 退化成纯 CE）\n", kd.lambda);
+        std::printf("[cfg]   pca_samples   = %lld（拟合 PCA 用前多少张训练图）\n", (long long)kd.pca_samples);
 
         std::printf("[cfg] ---------- debug：诊断 ----------\n");
         std::printf("[cfg]   intra         = %d\n", debug.intra);

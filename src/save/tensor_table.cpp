@@ -1,4 +1,4 @@
-// src/save/tensor_table.cpp
+﻿// src/save/tensor_table.cpp
 #include "save/tensor_table.h"
 
 #include <torch/torch.h>
@@ -80,8 +80,7 @@ namespace prkd::save
 		}
 	}  // namespace
 
-	void save(const TensorMap& items, const std::string& base,
-		const std::vector<std::string>& extra_header)
+	void save(const TensorMap& items, const std::string& base, const std::vector<std::string>& extra_header)
 	{
 		TORCH_CHECK(!items.empty(), "save: 表是空的 -> ", base);
 

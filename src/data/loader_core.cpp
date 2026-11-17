@@ -1,4 +1,4 @@
-// src/data/loader_core.cpp —— 机器本体。
+﻿// src/data/loader_core.cpp —— 机器本体。
 //
 // 逻辑是从 imagenet_loader.cpp 逐段搬来的（那份已经在 ImageNet 上验过），
 // 只做了三类替换：
@@ -485,13 +485,30 @@ namespace prkd::data
         // 同步路径：主线程自己把这一批干完
         if (opt_.workers <= 0) drain_inline();
 
-        // 等【该交付的那一批】完成。别的批先完成也没用 —— next_batch_ 保证顺序。
+        // ---- 等【该交付的那一批】完成。带看门狗：超 30 s 打现场，不退出 ----
+        //   ★ 打印/fflush 一定在【放锁之后】做 —— 持锁写 stdout 会让 worker 进不来，
+        //     看门狗反而把"卡 30 秒"变成"永久卡"。
+        for (;;)
         {
             std::unique_lock<std::mutex> lk(q_mu_);
-            ready_cv_.wait(lk, [&] {
+            const auto deadline = std::chrono::steady_clock::now()
+                + std::chrono::seconds(30);
+            const bool done = ready_cv_.wait_until(lk, deadline, [&] {
                 return batch_done_[static_cast<size_t>(b)]
                     || has_err_.load(std::memory_order_relaxed);
-            });
+                });
+            if (done) break;
+
+            // 现场：先把值抄出来，再放锁
+            const int64_t cur = cursor_;
+            const int64_t nxt = next_batch_;
+            const size_t  nfree = free_slots_.size();
+            const size_t  nq = q_.size();
+            lk.unlock();
+
+            std::printf("[watchdog] 批 %lld 超 30s 未完成  cursor=%lld next=%lld free=%zu q=%zu\n",
+                (long long)b, (long long)cur, (long long)nxt, nfree, nq);
+            std::fflush(stdout);
         }
 
         // 致命错误：整个 loader 停，半成品【不交付】

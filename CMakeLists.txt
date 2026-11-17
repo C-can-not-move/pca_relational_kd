@@ -65,6 +65,7 @@ set(APP_SOURCES
     "src/task/task_pre152.cpp"     # 任务 2：训练 resnet152
     "src/task/task_eval18.cpp"     # 任务 3：评估 resnet18 权重
     "src/task/task_eval152.cpp"    # 任务 4：评估 resnet152 权重
+    "src/kd/pcar_loss.cpp"        # PCA 关系损失
     "src/task/task_kd.cpp"         # 蒸馏（暂为空实现）
     "src/config.h"
     "src/config.cpp"

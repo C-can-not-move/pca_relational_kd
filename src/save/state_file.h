@@ -6,6 +6,11 @@
 //   RNG 状态     按确定性契约，种子 + (epoch, step) 就能重算（见进度页 5.1）
 //   每轮指标历史  那是 meta.json 的事
 //   权重          model.txt / model.bin
+//
+// 读写放在类型上（成员 static）而不是散在外面：
+//   · "这个结构能存能读" 是它自己的能力，写在结构里比写在命名空间里清楚
+//   · 调用点变短：st.save_to(p) / SlotState::load_from(p)
+//   · 自由函数保留为薄转发，免得老调用点被迫改（见文件末尾）
 #pragma once
 
 #include <cstdint>
@@ -51,11 +56,17 @@ namespace prkd::save
 		double      best_loss   = 0.0;   // best 那一轮的验证 loss —— acc 打平时用它比
 		int64_t     best_epoch  = -1;
 		std::string saved_at;           // ISO8601，本地时区
+
+		// ---------------- 读写 ----------------
+
+		// 原子写：先写 <path>.tmp，再 rename 成 <path>。
+		// rename 在同一个卷上是原子的 ⇒「state.txt 存在」就等于「这一轮存完了」。
+		// 父目录不存在会自动建。
+		void save_to(const std::string& path) const;
+
+		// 没有 format 行 / 缺字段就抛 —— 宁可当场失败，也不要带着错状态续跑。
+		// 唯一的例外是 best_loss：它是后加的字段，旧存档按 0 处理。
+		static SlotState load_from(const std::string& path);
 	};
 
-	// 原子写（.tmp + rename）
-	void      save_state(const SlotState& st, const std::string& path);
-
-	// 没有 format 行 / 缺字段就抛 —— 宁可当场失败，也不要带着错状态续跑
-	SlotState load_state(const std::string& path);
-}
+}  // namespace prkd::save

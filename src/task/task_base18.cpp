@@ -1,4 +1,4 @@
-﻿// src/task/task_base18.cpp —— 任务 1：训练 resnet18 基准
+// src/task/task_base18.cpp —— 任务 1：训练 resnet18 基准
 //
 // 这个文件是自足的：loader、模型、优化器、存档、断点、导出全在里面。
 // 不通过工厂或共享函数间接拿模型 —— 换 resnet152 请改 task_pre152.cpp。
@@ -360,6 +360,17 @@ namespace prkd::task
 					std::printf("[ckpt] best <- epoch %lld  acc %.4f（仅内存，%lld 轮后才写盘）\n",(long long)epoch, best_acc, (long long)best_write_from_epoch);
 				}
 			}
+			// ④ 补刷 auto/state.txt —— 让 best 的三项也进断点
+			//    make_state() 只填进度；best 是 ③ 之后才知道的，所以在这里补写一次。
+			//    只写 state.txt：权重与优化器已在 ① 落盘，这里不重复写 45 MB。
+			//    没有这一步的话，续跑时只能退回 best/ 那份（可能已是旧值）。
+			{
+				auto st_now = make_state(epoch);
+				st_now.best_metric = best_acc;
+				st_now.best_loss   = best_loss;
+				st_now.best_epoch  = best_epoch;
+				st_now.save_to(auto_dir + "/state.txt");
+			}
 			std::fflush(stdout);
 		}
 
@@ -389,7 +400,7 @@ namespace prkd::task
 			fin.best_metric = best_acc;
 			fin.best_loss   = best_loss;
 			fin.best_epoch  = best_epoch;
-			prkd::save::save_state(fin, auto_dir + "/state.txt");
+			fin.save_to(auto_dir + "/state.txt");
 			std::printf("[done] auto/state.txt 已标 finished=1（epoch %lld）\n",(long long)last_epoch);
 		}
 

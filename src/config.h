@@ -92,6 +92,16 @@ namespace prkd::cfg
         double  best_write_from = 0.75;
     };
 
+    // 关系蒸馏（task_kd.cpp）的超参。
+    // 放在这里而不是晒进 TrainSettings：它们只对 kd 任务有意义，
+    // 塞进训练配方会让"换一次 base18 的配方"时多出三个不相干的数。
+    struct KdSettings
+    {
+        int64_t keep        = 128;    // PCA 保留的主轴数（师生都取前 keep 列）
+        double  lambda      = 25.0;   // 关系损失的权重（RKD 原文的量级）
+        int64_t pca_samples = 4096;   // 拟合 PCA 用前多少张训练图（确定性顺序）
+    };
+
     struct Settings
     {
         RunConfig      run;
@@ -99,6 +109,7 @@ namespace prkd::cfg
         AloiSettings   aloi;
         DebugSettings  debug;
         TrainSettings  train;
+        KdSettings     kd;
 
         // 读 ini 并覆盖自己的字段。
         //   打不开 → 抛 std::runtime_error（配置是刚需，没有"用默认值跑起来"这种退路）

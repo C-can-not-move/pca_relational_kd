@@ -8,9 +8,9 @@
 # 任务名：
 #   base18    训练 resnet18 基准
 #   pre152    训练 resnet152
+#   kd        关系蒸馏（教师只取特征，见文件末尾 kd.* 段）
 #   eval18    评估 resnet18 的权重（读 run.ckpt，只用 val）
 #   eval152   评估 resnet152 的权重（同上）
-#   kd        蒸馏（未实现）
 # 打不开这个文件 → 直接报错退出（没有"用默认值跑起来"这种退路）。
 #
 # 规则：
@@ -37,7 +37,8 @@ run.data_dir     =            # ★ 要改：ImageNet 根目录（代码自己�
 run.out_dir      =            # ★ 要改：存档与导出都落在它下面
 #   <out_dir>/train/<name>_seed<seed>/{auto,best}    name = resnet18 / resnet152
 #   <out_dir>/pretrained/<name>_acc<acc>
-run.ckpt         =            # 【当前未使用】续跑靠 run.seed 找目录，不读这一项
+run.ckpt         =            # 权重前缀（不含扩展名）。eval18/eval152 读它；task=kd 时是【教师】
+                              # 例：<out_dir>/resnet152_1000 或 <out_dir>/pretrained/resnet18_acc0.5493
 run.device_index = 0          # 用哪块卡；-1 = 强制 CPU
 run.seed         = 2026       # 同一个种子 = 同一个 run 目录；想从头跑就换种子或删目录
 
@@ -99,3 +100,14 @@ train.best_write_from = 0.75
 debug.intra      = 1       # ATen intra-op 线程数；1 = 不让它和 worker 抢核
 debug.selftest   = true    # 只决定是否打印模型参数量（数据对拍那段已随入口重写移除）
 debug.log_every  = 50      # 长循环的进度间隔（批）；0 = 不打印
+# ---- 关系蒸馏（只在 run.task = kd 时读）----
+#
+# 做法：教师（resnet152，ImageNet-1k 权重）与学生（resnet18）各自把特征投影到
+#       PCA 子空间，然后比【批内成对距离矩阵】。教师的 fc 一次都不调。
+#       ⇒ 不需要 wnid → 1000 类索引的映射，也不需要给教师换 200 类的头。
+#
+# 拟合 PCA 时师生必须喂【同一批图】，且只拟合一次（训练中特征分布在变）。
+
+kd.keep        = 128      # PCA 保留的主轴数（师生取同样多，才能比距离）
+kd.lambda      = 25.0     # 关系损失权重；0 = 退化成纯 CE（可当"同代码路径"的对照）
+kd.pca_samples = 4096     # 拟合 PCA 用前多少张训练图（确定性顺序）
