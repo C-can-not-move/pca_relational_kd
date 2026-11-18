@@ -34,6 +34,7 @@
 
 #include <torch/torch.h>
 
+#include "save/tensor_table.h"
 #include "util/pca.h"
 
 namespace prkd::kd
@@ -96,7 +97,14 @@ namespace prkd::kd
 	//      代价：轴"过时"——它只说明"不是最优的降噪方向"，不说明"损失错了"。
 	//      这正是我们接受的取舍：宁要一个稳定但次优的投影，不要一个最优但可作弊的。
 	//
-	// ⑤ 真要让坐标系参与变化，唯一正当的写法是学一个映射
+	// ⑤ 存档存什么（2026-11-18 起）
+	//      存的是【完整的 PCA】：mu (D,) 与 V (D, D)，外加特征值。
+	//      不存"前 keep 列"——keep 是"怎么用它"，不是"它是什么"。
+	//      于是 kd.keep 变成运行时参数：改 128 → 256 只需重读存档，不必重跑拟合。
+	//      代价：教师侧 V 是 2048×2048 f32 = 16.8 MB，学生 512×512 = 1.0 MB。
+	//      读档只认这个格式；旧版（前 keep 列、无特征值）直接抛，要求删档重拟合。
+	//
+	// ⑥ 真要让坐标系参与变化，唯一正当的写法是学一个映射
 	//      z_s = (f_s − μ_t) · W ,  W: 512 → keep
 	//      此时锚是教师的固定子空间，学生学的是"怎么把自己的特征映进去"。
 	//      代价：W 会塌缩（把差异方向压到零），必须加正交/谱范数约束。
@@ -170,6 +178,20 @@ namespace prkd::kd
 		// 返回标量：huber(D_s/scale, D_t/scale)，与 CE 相加由调用方负责。
 		torch::Tensor forward(const torch::Tensor& student_feat,const torch::Tensor& teacher_feat);
 
+		// ---------------- 坐标系的存取（"saved" 模式用）----------------
+		//
+		// 为什么要有这个：轴是在【某个时刻的学生特征】上拟合的。
+		//   live  模式：每次启动都在当前学生上重拟合 ⇒ 断点前后换了尺子，
+		//              rkd 会在断点处跳一次（0.279 → 0.172 那次就是）。
+		//   saved 模式：第一次拟合后把 μ/V 存进 auto/pca.{txt,bin}，
+		//              之后每次启动读回来 ⇒ 整条训练只用一把尺子。
+		//
+		// 存四个张量：mu_s / V_s / mu_t / V_t（f32，CPU，文本键表格式）。
+		prkd::save::TensorMap dump_coords() const;
+		// keep 由配置传入：存档里是完整 PCA，子空间维数由调用方决定
+		void load_coords(const prkd::save::TensorMap& items,
+			const torch::Device& device, int64_t keep);
+
 		// ---------------- 诊断 ----------------
 		int64_t keep()        const { return keep_; }
 		double  last_scale()  const { return last_scale_; }   // 上一次 forward 用的归一化标量
@@ -184,8 +206,18 @@ namespace prkd::kd
 		prkd::util::Pca pca_s_;
 		prkd::util::Pca pca_t_;
 
-		torch::Tensor mu_s_, V_s_;     // (Ds,) / (Ds, keep)，常驻 device
-		torch::Tensor mu_t_, V_t_;     // (Dt,) / (Dt, keep)
+		// V 存【完整】矩阵 (D, D)：这样 kd.keep 变成运行时参数，
+		// 换 keep 不必重拟合（存档里就是那份 PCA 本身，不是它的前 keep 列）。
+		torch::Tensor mu_s_, V_s_;     // (Ds,) / (Ds, Ds)，常驻 device
+		torch::Tensor mu_t_, V_t_;     // (Dt,) / (Dt, Dt)
+		torch::Tensor Vs_use_, Vt_use_; // V 的前 keep_ 列（view，不占额外内存）
+		// 为什么 V 存全而不是存前 keep 列：keep 是"用几列"，不是"有几列"。
+		// 存全以后 kd.keep 可以随便改而不必重拟合；投影时切 view，零拷贝。
+
+		// 全部特征值（降序，CPU f32）。只为两件事存在：
+		//   ① finish_fit 里打印"前 keep 轴占多少方差"
+		//   ② 从存档读回时【也能打印同一行】—— 否则读档的人看不到这个指标
+		torch::Tensor eig_s_, eig_t_;
 		bool          fitted_ = false;
 
 		double last_scale_ = 0.0;

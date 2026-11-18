@@ -100,6 +100,20 @@ namespace prkd::cfg
         int64_t keep        = 128;    // PCA 保留的主轴数（师生都取前 keep 列）
         double  lambda      = 25.0;   // 关系损失的权重（RKD 原文的量级）
         int64_t pca_samples = 4096;   // 拟合 PCA 用前多少张训练图（确定性顺序）
+
+        // 坐标系从哪儿来：
+        //   "live"   每次启动都在【当前学生】上重拟合 —— 断点前后换尺子（rkd 会跳）
+        //   "saved"  第一次拟合后存进 auto/pca.{txt,bin}，之后永远读回来 —— 一把尺子到底
+        // 比较两条训练曲线时用 saved；只想快速看趋势时 live 更省事。
+        std::string pca_source = "live";
+
+        // 非空 ⇒ 用【这个权重】的模型来计算学生侧的坐标轴，而不是用训练中的学生。
+        //   好处：轴完全来自一个与本次训练无关的固定快照 ⇒ 跨运行完全可比、
+        //         不会因为"在训练到一半的学生上拟合"而偏向当前状态。
+        //   典型值：run/pretrained/resnet18_acc0.5493（我们自己训的 200 类）
+        //          run/resnet18_1000（1000 类，会自动跳过 fc）
+        //   空字符串 = 用训练中的学生（旧行为）。
+        std::string pca_ckpt;
     };
 
     struct Settings

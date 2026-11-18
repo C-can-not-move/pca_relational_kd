@@ -106,7 +106,12 @@ namespace prkd::task
 		{
 			torch::NoGradGuard g;   // 只取统计量，不建图
 
+			const auto t0 = std::chrono::steady_clock::now();
+
 			int64_t seen = 0;
+			int64_t step = (want >= 10) ? (want / 10) : want;   // 每 10% 打一行
+			if (step < 1) step = 1;
+
 			while (seen < want && ld.has_next())
 			{
 				auto batch = ld.next();
@@ -115,11 +120,27 @@ namespace prkd::task
 				pcar.add_teacher(teacher->forward_features(x));
 				pcar.add_student(student->forward_features(x));
 
+				const int64_t before = seen;
 				seen += x.size(0);
+
+				if (seen / step != before / step)
+				{
+					const double e = std::chrono::duration<double>(
+						std::chrono::steady_clock::now() - t0).count();
+					std::printf("[pcar]   拟合进度 %lld / %lld 张（%.0f img/s，已用 %.0f s）\n",
+						(long long)seen, (long long)want,
+						e > 0 ? static_cast<double>(seen) / e : 0.0, e);
+					std::fflush(stdout);
+				}
 			}
 
 			pcar.finish_fit(device);
-			std::printf("[pcar] 用 %lld 张图拟合（新跑/续跑都一样，只拟合一次）\n",(long long)seen);
+
+			const double secs = std::chrono::duration<double>(
+				std::chrono::steady_clock::now() - t0).count();
+			std::printf("[pcar] 拟合耗时 %.1f s（%lld 张，%.0f img/s）\n",
+				secs, (long long)seen,
+				secs > 0 ? static_cast<double>(seen) / secs : 0.0);
 		}
 	}  // namespace
 
@@ -157,7 +178,7 @@ namespace prkd::task
 		teacher->to(device);
 		teacher->eval();
 
-		// ---------------- 第一趟：拟合师生的 PCA ----------------
+		// ---------------- 第一趟：构造师生的 PCA ----------------
 		//
 		// 只吃前 kd.pca_samples 张（按 loader 顺序，确定性）。
 		// 师生必须喂【同一批图】，否则两个协方差不描述同一份数据。
@@ -166,20 +187,18 @@ namespace prkd::task
 		pc.lambda = st.kd.lambda;
 		pc.delta  = 1.0;
 
-		constexpr int64_t kStudentDim = 512;    // resnet18 池化后
-		constexpr int64_t kTeacherDim = 2048;   // resnet152 池化后
+		constexpr int64_t kStudentDim = 512;    // resnet18
+		constexpr int64_t kTeacherDim = 2048;   // resnet152
 		prkd::kd::PcarLoss pcar(kStudentDim, kTeacherDim, pc);
 
 		// loader 一次交付一整批，所以样本数必须圆整到批的倍数。
-		// 不圆整的话，"配置 4096 张" 实际会吃到 4096+（向上取整那一批），
+		// 不圆整的话，"配置默认4096 张" 实际会吃到 4096+（向上取整那一批），
 		// 日志与配置就对不上。这里向下圆整：配置多少就吃多少，且是整批。
 		const int64_t bs      = st.loader.batch;
 		const int64_t want_raw = std::min<int64_t>(st.kd.pca_samples, train_ld->size());
 		const int64_t want    = (bs > 0) ? (want_raw / bs) * bs : 0;
-		TORCH_CHECK(want > 0,
-			"kd.pca_samples 太小：需要至少一个整批（loader.batch = ", bs, "）");
-		std::printf("[kd] 拟合 PCA：前 %lld 张（%lld 批 × %lld）\n",
-			(long long)want, (long long)(want / bs), (long long)bs);
+		TORCH_CHECK(want > 0,"kd.pca_samples 太小：需要至少一个整批（loader.batch = ", bs, "）");
+		std::printf("[kd] 拟合 PCA：前 %lld 张（%lld 批 × %lld）\n",(long long)want, (long long)(want / bs), (long long)bs);
 
 		// ---------------- 存档目录 ----------------
 		//   与 base18/pre152 完全同一套目录语义，只是模型名不同（kd18），
@@ -188,8 +207,7 @@ namespace prkd::task
 		//     <out_dir>/train/kd18_seed<seed>/best/    后段每次刷新覆盖：只有权重
 		//     <out_dir>/pretrained/kd18_acc<acc>       收尾导一次（文本键表格式）
 		const std::string model_name = "kd18";
-		const std::string run_dir =
-			st.run.out_dir + "/train/" + model_name + "_seed" + std::to_string(st.run.seed);
+		const std::string run_dir = st.run.out_dir + "/train/" + model_name + "_seed" + std::to_string(st.run.seed);
 		const std::string auto_dir    = run_dir + "/auto";
 		const std::string best_dir    = run_dir + "/best";
 		const std::string pretrain_dir = st.run.out_dir + "/pretrained";
@@ -309,7 +327,57 @@ namespace prkd::task
 		//   续跑时学生的权重已经是第 N 轮的，用这个学生去拟合，
 		//   得到的轴才与"接下来要训练的那个学生"处在同一片特征空间里。
 		//   放在恢复之前的话，会用随机初值拟合，等于给续跑换了一套坐标系。
-		fit_pca(pcar, teacher, student, *train_ld, device, want);
+		// ---- 坐标系：live = 每次重拟合；saved = 存一次、之后一直读回 ----
+		//   判据在 config 的 kd.pca_source。
+		//   saved 模式下若存档还不存在，就照常拟合一次，然后立刻写盘。
+		//
+		// ★ 写盘放在【两个拟合分支之外】：不管是"用当前学生拟合"还是
+		//   "用 pca_ckpt 的固定快照拟合"，只要这次真的拟合了、且是 saved，
+		//   就应该落盘。之前它写在 else 里，pca_ckpt + saved 那条路根本没写。
+		const std::string pca_base = auto_dir + "/pca";
+		bool fitted_now = false;
+
+		if (st.kd.pca_source == "saved" && std::filesystem::exists(pca_base + ".txt"))
+		{
+			pcar.load_coords(prkd::save::load(pca_base), device, st.kd.keep);
+			std::printf("[pcar] 用存档里的坐标系（不重拟合）\n");
+		}
+		else if (!st.kd.pca_ckpt.empty())
+		{
+			// ---- 用另一份权重（固定快照）来算学生侧的轴 ----
+			//   这份模型只为拟合服务：eval()、NoGrad，用完就销毁。
+			auto items = prkd::save::load(st.kd.pca_ckpt);
+
+			// 探针的类别数【从权重里读】：restore() 是严格模式，缺一个参数就抛，
+			// 所以不能把 fc 删掉，只能让探针的 fc 和权重对上（200 类 / 1000 类都行）。
+			// fc 从头到尾不会被调用 —— 只用 forward_features。
+			int64_t probe_classes = num_classes;
+			for (const auto& kv : items)
+				if (kv.first == "fc.weight") probe_classes = kv.second.size(0);
+
+			prkd::model::ResNet probe = prkd::model::h_resnet18(probe_classes);
+
+			const std::size_t n = prkd::save::restore(probe, items);
+			probe->to(device);
+			probe->eval();
+			std::printf("[pcar] 学生侧坐标轴改用 %s（探针 %lld 类；装入 %zu 个张量）\n",
+				st.kd.pca_ckpt.c_str(), (long long)probe_classes, n);
+
+			fit_pca(pcar, teacher, probe, *train_ld, device, want);
+			probe = nullptr;   // 用完即弃
+			fitted_now = true;
+		}
+		else
+		{
+			fit_pca(pcar, teacher, student, *train_ld, device, want);
+			fitted_now = true;
+		}
+
+		if (fitted_now && st.kd.pca_source == "saved")
+		{
+			prkd::save::save(pcar.dump_coords(), pca_base);
+			std::printf("[pcar] 坐标系已写入 %s.{txt,bin}（之后一直用它）\n", pca_base.c_str());
+		}
 
 		for (int64_t epoch = start_epoch; epoch <= st.train.epochs; ++epoch)
 		{
@@ -454,7 +522,9 @@ namespace prkd::task
 				if (fn.rfind(prefix, 0) == 0) std::filesystem::remove(e.path(), ec);
 			}
 			char name[160];
-			std::snprintf(name, sizeof(name), "%s_acc%.4f", model_name.c_str(), best_acc);
+			// 名字里带上坐标系来源，省得回头分不清"哪一份用了哪把尺子"
+			std::snprintf(name, sizeof(name), "%s_%s_acc%.4f",
+				model_name.c_str(), st.kd.pca_source.c_str(), best_acc);
 			const std::string base = pretrain_dir + "/" + name;
 			prkd::model::save_checkpoint(student, base);
 			std::printf("[done] 预训练权重: %s.{txt,bin}（旧的那份已删除）\n", base.c_str());
