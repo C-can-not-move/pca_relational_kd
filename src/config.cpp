@@ -186,6 +186,7 @@ namespace prkd::cfg
             else if (key == "kd.pca_samples") kd.pca_samples = parse_int(value, where);
             else if (key == "kd.pca_source")  kd.pca_source  = value;
             else if (key == "kd.pca_ckpt")    kd.pca_ckpt    = value;
+            else if (key == "kd.mode")        kd.metric      = prkd::kd::from_string(value);
 
             // ★ 未知 key 一律报错。拼错的 "worker = 8" 静默失效是最坑的一种。
             else throw std::runtime_error(where + ": 未知配置项 \"" + key + "\"");
@@ -267,6 +268,8 @@ namespace prkd::cfg
         std::printf("[cfg]   keep          = %lld（PCA 保留的主轴数）\n", (long long)kd.keep);
         std::printf("[cfg]   lambda        = %.2f（关系损失权重；0 = 退化成纯 CE）\n", kd.lambda);
         std::printf("[cfg]   pca_samples   = %lld（拟合 PCA 用前多少张训练图）\n", (long long)kd.pca_samples);
+        std::printf("[cfg]   mode          = %s（%s）\n", prkd::kd::to_string(kd.metric),
+            kd.metric == prkd::kd::Metric::Angle ? "上三角去心余弦，尺度免疫" : "逐元素 Huber，尺度敏感");
         std::printf("[cfg]   pca_ckpt      = %s\n", kd.pca_ckpt.empty()
             ? "（空 —— 用训练中的学生）" : kd.pca_ckpt.c_str());
         std::printf("[cfg]   pca_source    = %s（%s）\n", kd.pca_source.c_str(),

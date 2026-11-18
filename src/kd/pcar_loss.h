@@ -34,6 +34,7 @@
 
 #include <torch/torch.h>
 
+#include "kd/metric.h"
 #include "save/tensor_table.h"
 #include "util/pca.h"
 
@@ -143,11 +144,22 @@ namespace prkd::kd
 	//         不适合【跨运行】比大小（坐标系不同，尺子就不同）。
 	// ==========================================================================
 
+	// Metric 定义在 kd/metric.h（轻量头，config.h 也用它）
+	// 度量函数：吃两张 (B,B) 距离矩阵，返回【标量张量】（保留梯度）。
+	//   Huber 版内部按"教师的平均距离"归一化 —— 归一化是它的一部分（比的是数值差）
+	//   Angle 版不归一化 —— 它比的就是形状
+	torch::Tensor metric_huber(const torch::Tensor& Ds, const torch::Tensor& Dt, double delta);
+	torch::Tensor metric_angle(const torch::Tensor& Ds, const torch::Tensor& Dt);
+
+	// 恒算的相关系数（两种 mode 都记），只用于日志
+	torch::Tensor matrix_corr(const torch::Tensor& Ds, const torch::Tensor& Dt);
+
 	struct PcarConfig
 	{
 		int64_t keep   = 128;    // 保留的主轴数（师生取同样多，才能比距离）
 		double  lambda = 25.0;   // 关系损失的权重（RKD 原文的量级）
 		double  delta  = 1.0;    // Huber 的 δ：小于它按平方，大于它按线性
+		Metric  metric = Metric::Huber;   // 用哪个度量（forward 里 switch）
 	};
 
 	class PcarLoss
@@ -196,6 +208,7 @@ namespace prkd::kd
 		int64_t keep()        const { return keep_; }
 		double  last_scale()  const { return last_scale_; }   // 上一次 forward 用的归一化标量
 		double  last_rkd()    const { return last_rkd_; }     // 上一次 loss 的数值（打印用）
+		double  last_cos()    const { return last_cos_; }     // 恒有的相关系数（打印用）
 
 		const PcarConfig& config() const { return cfg_; }
 
@@ -222,6 +235,7 @@ namespace prkd::kd
 
 		double last_scale_ = 0.0;
 		double last_rkd_   = 0.0;
+		double last_cos_   = 0.0;
 	};
 
 }  // namespace prkd::kd

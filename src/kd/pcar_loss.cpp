@@ -94,6 +94,44 @@ namespace prkd::kd
 			(long long)keep_);
 	}
 
+	// ---------------- 度量：两个函数 + 一个恒算的相关系数 ----------------
+
+	// to_string / from_string 在 kd/metric.h（inline），这里不再定义
+
+	namespace
+	{
+		// 上三角摊平（不含对角），保留梯度
+		inline torch::Tensor upper_tri(const torch::Tensor& D)
+		{
+			const int64_t n = D.size(0);
+			const auto idx = torch::triu_indices(n, n, /*offset=*/1).to(D.device());
+			return D.index({ idx[0], idx[1] });
+		}
+	}
+
+	torch::Tensor matrix_corr(const torch::Tensor& Ds, const torch::Tensor& Dt)
+	{
+		const auto a = upper_tri(Ds);
+		const auto b = upper_tri(Dt);
+		const auto ac = a - a.mean();
+		const auto bc = b - b.mean();
+		const auto den = (ac.norm() * bc.norm()).clamp_min(1e-8);
+		return (ac * bc).sum().div(den);          // Pearson 相关
+	}
+
+	torch::Tensor metric_angle(const torch::Tensor& Ds, const torch::Tensor& Dt)
+	{
+		// 1 − 相关：0 = 形状完全一致；对整体放大/平移免疫
+		return 1.0 - matrix_corr(Ds, Dt);
+	}
+
+	torch::Tensor metric_huber(const torch::Tensor& Ds, const torch::Tensor& Dt, double delta)
+	{
+		// 两边用同一个标量（教师的平均距离）：这里比的是数值差，尺度要算进损失
+		const auto scale = Dt.mean().detach() + 1e-6;
+		return torch::huber_loss(Ds / scale, Dt / scale, delta, torch::Reduction::Mean);
+	}
+
 	torch::Tensor PcarLoss::forward(const torch::Tensor& student_feat,
 		const torch::Tensor& teacher_feat)
 	{
@@ -110,14 +148,23 @@ namespace prkd::kd
 		const auto Ds = pairwise_dist(zs);
 		const auto Dt = pairwise_dist(zt);
 
-		// ---- 归一化：两边用【同一个】标量（教师的平均距离）----
-		// 各自归一化会让"尺度全错、形状对"的情形损失为零，等于没约束尺度。
-		const auto scale = Dt.mean().detach() + 1e-6;
+		// ---- 选度量：enum + switch，按配置走 ----
+		torch::Tensor raw;
+		switch (cfg_.metric)
+		{
+		case Metric::Angle:
+			raw = metric_angle(Ds, Dt);                    // 1 − 相关，尺度免疫
+			last_scale_ = Dt.mean().item<double>();        // 只作读数
+			break;
+		case Metric::Huber:
+			raw = metric_huber(Ds, Dt, cfg_.delta);        // 逐元素，尺度算进损失
+			last_scale_ = Dt.mean().item<double>();
+			break;
+		}
 
-		const auto raw = torch::huber_loss(Ds / scale, Dt / scale,cfg_.delta, torch::Reduction::Mean);
-
-		last_scale_ = scale.item<double>();
-		last_rkd_   = raw.item<double>();          // 原始值（未乘 λ），日志用这个
+		// 相关系数恒算一份（两种 mode 都记），只用于日志与对照
+		last_cos_ = matrix_corr(Ds.detach(), Dt).item<double>();
+		last_rkd_ = raw.item<double>();                   // 原始值（未乘 λ），日志用这个
 
 		// λ 在这里乘上：调用方拿到的就是"要加进总损失的那个量"。
 		// 好处是调用点只有一句 ce + rkd_term，权重与损失住在同一处；

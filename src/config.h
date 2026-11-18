@@ -1,6 +1,8 @@
 #pragma once
 
 #include <cstdint>
+
+#include "kd/metric.h"
 #include <string>
 
 namespace prkd::cfg
@@ -114,6 +116,11 @@ namespace prkd::cfg
         //          run/resnet18_1000（1000 类，会自动跳过 fc）
         //   空字符串 = 用训练中的学生（旧行为）。
         std::string pca_ckpt;
+
+        // 关系损失用哪个"矩阵度量"（由 pcar_loss 的 Metric 枚举承载）：
+        //   huber  逐元素比（尺度敏感，RKD-D 那一类）
+        //   angle  上三角去心余弦 = Pearson 相关（只看形状，尺度/平移免疫）
+        prkd::kd::Metric metric = prkd::kd::Metric::Huber;
     };
 
     struct Settings

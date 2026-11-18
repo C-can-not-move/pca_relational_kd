@@ -186,6 +186,7 @@ namespace prkd::task
 		pc.keep   = st.kd.keep;
 		pc.lambda = st.kd.lambda;
 		pc.delta  = 1.0;
+		pc.metric = st.kd.metric;          // 矩阵度量（huber / angle），forward 里 switch
 
 		constexpr int64_t kStudentDim = 512;    // resnet18
 		constexpr int64_t kTeacherDim = 2048;   // resnet152
@@ -388,7 +389,7 @@ namespace prkd::task
 			student->train();
 
 			const auto t0 = std::chrono::steady_clock::now();
-			double sum_ce = 0.0, sum_rkd = 0.0;
+			double sum_ce = 0.0, sum_rkd = 0.0, sum_cos = 0.0;
 			int64_t correct = 0, total = 0, batches = 0;
 
 			while (train_ld->has_next())
@@ -420,25 +421,27 @@ namespace prkd::task
 
 				sum_ce  += ce.item<double>();
 				sum_rkd += pcar.last_rkd();          // 原始（未乘 λ）
+				sum_cos += pcar.last_cos();          // 相关系数（两种 mode 都记）
 				correct += logits.argmax(1).eq(y).sum().item<int64_t>();
 				total   += y.size(0);
 				++batches;
 
 				if (tcfg.log_every > 0 && batches % tcfg.log_every == 0)
 				{
-					std::printf("[kd] batch %lld  ce %.4f  rkd %.4f  acc %.4f\n",
+					std::printf("[kd] batch %lld  ce %.4f  rkd %.4f  cos %.4f  acc %.4f\n",
 						(long long)batches, sum_ce / batches, sum_rkd / batches,
-						static_cast<double>(correct) / total);
+						sum_cos / batches, static_cast<double>(correct) / total);
 					std::fflush(stdout);
 				}
 			}
 
 			const double secs = std::chrono::duration<double>(
 				std::chrono::steady_clock::now() - t0).count();
-			std::printf("[epoch %lld] train ce %.4f  rkd %.4f  acc %.4f (%.0f img/s, %.1f s)\n",
+			std::printf("[epoch %lld] train ce %.4f  rkd %.4f  cos %.4f  acc %.4f (%.0f img/s, %.1f s)\n",
 				(long long)epoch,
 				batches ? sum_ce / batches : 0.0,
 				batches ? sum_rkd / batches : 0.0,
+				batches ? sum_cos / batches : 0.0,
 				total ? static_cast<double>(correct) / total : 0.0,
 				secs > 0 ? static_cast<double>(total) / secs : 0.0, secs);
 
@@ -513,7 +516,10 @@ namespace prkd::task
 
 			// 导出：<pretrain_dir>/kd18_acc0.5xxx.{txt,bin}，目录里只留一份
 			std::filesystem::create_directories(pretrain_dir);
-			const std::string prefix = model_name + "_acc";
+			// 前缀带上 pca_source：saved / live 各自只清自己那一支的旧档，互不误删。
+			// （2026-11-18：之前这里是 model_name + "_acc"，而文件名已经带了 pca_source，
+			//   于是既不匹配、也什么都没删，却还打了"旧的那份已删除"——误报。）
+			const std::string prefix = model_name + "_" + st.kd.pca_source + "_acc";
 			std::error_code ec;
 			for (const auto& e : std::filesystem::directory_iterator(pretrain_dir, ec))
 			{
@@ -527,7 +533,7 @@ namespace prkd::task
 				model_name.c_str(), st.kd.pca_source.c_str(), best_acc);
 			const std::string base = pretrain_dir + "/" + name;
 			prkd::model::save_checkpoint(student, base);
-			std::printf("[done] 预训练权重: %s.{txt,bin}（旧的那份已删除）\n", base.c_str());
+			std::printf("[done] 预训练权重: %s.{txt,bin}（同一支的旧导出已清理）\n", base.c_str());
 		}
 
 		// finished=1 只是留证，不是启动开关（判据是 epoch 与 epochs 的关系）
