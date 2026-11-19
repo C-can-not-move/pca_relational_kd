@@ -66,7 +66,6 @@ namespace prkd::cfg
     {
         int  intra    = 1;      // ATen intra-op 线程数；1 = 不让它和 worker 抢核
         bool selftest = true;   // 是否跑模型自检与 workers 对拍
-        int64_t log_every = 50; // 长循环的进度间隔（批）；0 = 不打印
     };
 
     // 训练超参。原先写在 main 的 TrainArgs 里，现在挪进来 ——

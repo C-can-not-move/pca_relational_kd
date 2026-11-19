@@ -163,7 +163,6 @@ namespace prkd::cfg
             // ---- debug ----
             else if (key == "debug.intra")    debug.intra    = static_cast<int>(parse_int(value, where));
             else if (key == "debug.selftest") debug.selftest = parse_bool(value, where);
-            else if (key == "debug.log_every") debug.log_every = parse_int(value, where);
 
             // ---- train（训练超参；不含 batch，批属于 loader）----
             else if (key == "train.epochs")       train.epochs       = parse_int(value, where);
@@ -199,7 +198,6 @@ namespace prkd::cfg
         if (loader.short_side <= 0) throw std::runtime_error(path + ": loader.short_side 必须 > 0");
         if (loader.crop       <= 0) throw std::runtime_error(path + ": loader.crop 必须 > 0");
         if (debug.intra       <  1) throw std::runtime_error(path + ": debug.intra 必须 >= 1");
-        if (debug.log_every   <  0) throw std::runtime_error(path + ": debug.log_every 不能为负（0 = 不打印进度）");
         if (train.epochs      <  1) throw std::runtime_error(path + ": train.epochs 必须 >= 1");
         if (train.lr          <= 0) throw std::runtime_error(path + ": train.lr 必须 > 0");
         if (train.momentum    <  0 || train.momentum >= 1) throw std::runtime_error(path + ": train.momentum 必须在 [0,1) 内");
@@ -278,7 +276,6 @@ namespace prkd::cfg
         std::printf("[cfg] ---------- debug：诊断 ----------\n");
         std::printf("[cfg]   intra         = %d\n", debug.intra);
         std::printf("[cfg]   selftest      = %s\n", debug.selftest ? "true" : "false");
-        std::printf("[cfg]   log_every     = %lld%s\n", (long long)debug.log_every,debug.log_every == 0 ? "（不打印进度）" : " 批");
     }
 
     std::string Settings::summary() const

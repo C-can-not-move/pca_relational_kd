@@ -99,7 +99,6 @@ train.best_write_from = 0.75
 # ---- 诊断 ----
 debug.intra      = 1       # ATen intra-op 线程数；1 = 不让它和 worker 抢核
 debug.selftest   = true    # 只决定是否打印模型参数量（数据对拍那段已随入口重写移除）
-debug.log_every  = 50      # 长循环的进度间隔（批）；0 = 不打印
 # ---- 关系蒸馏（只在 run.task = kd 时读）----
 #
 # 做法：教师（resnet152，ImageNet-1k 权重）与学生（resnet18）各自把特征投影到

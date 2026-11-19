@@ -244,7 +244,7 @@ namespace prkd::task
 			.weight_decay(st.train.weight_decay));
 
 		prkd::train::TrainConfig tcfg;
-		tcfg.log_every = st.debug.log_every;
+		tcfg.log_every = st.train.log_every;   // 只保留一个开关：train.log_every
 
 		prkd::save::TensorMap best_snapshot;
 		prkd::save::SlotState best_state;

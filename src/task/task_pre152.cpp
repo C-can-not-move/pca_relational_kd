@@ -141,7 +141,7 @@ namespace prkd::task
 				.weight_decay(st.train.weight_decay));
 
 		prkd::train::TrainConfig tcfg;
-		tcfg.log_every = (st.debug.log_every > 0) ? st.debug.log_every : st.train.log_every;
+		tcfg.log_every = st.train.log_every;   // 只保留一个开关：train.log_every
 
 		std::printf("[train] batch=%lld workers=%lld lr=%.4f momentum=%.2f wd=%.1e epochs=%lld\n",
 			(long long)st.loader.batch, (long long)st.loader.workers,
