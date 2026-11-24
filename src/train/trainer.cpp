@@ -1,4 +1,4 @@
-#include "train/trainer.h"
+﻿#include "train/trainer.h"
 
 #include <chrono>
 #include <cstdio>
@@ -57,7 +57,7 @@ namespace prkd::train
                     // ---- 纯净的四步 ----
                     optimizer->zero_grad();
                     logits = model->forward(x);
-                    const auto loss = torch::nn::functional::cross_entropy(logits, y);
+                    const auto loss = torch::nn::functional::cross_entropy(logits, y);// 自带softmax等
                     loss.backward();
                     optimizer->step();
                     // ---- 结束 ----
